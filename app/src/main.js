@@ -1,733 +1,607 @@
-// Vice Cover Studio v2 — editor (fresh code for gta6-cover-art-01).
-// State + controls + export. Rendering lives in cover.js; deterministic
-// screenshot states live in shots.js.
+// Vice Cover Studio v3 — editor wiring. Loads the 8 samples, keeps the
+// state + undo history, renders the preview, and exports PNGs. When the
+// page carries ?shot=…, the shot driver takes over instead.
+import { GRADES, GRADE_IDS } from './grades.js';
+import { SIZES, LAYOUTS, LAYOUT_IDS, layoutFor } from './layouts.js';
+import { renderCover, renderCoverToCanvas } from './render.js';
+import { SAMPLES, SHOTS, PRESETS, DEFAULT_CAPTION } from './presets.js';
 
-import {
-  GRADES, GRADE_IDS, SIZES, SIZE_IDS, LAYOUTS, layoutFor, layoutDef,
-  assignPanels, renderCover,
-} from './cover.js';
-import { SHOTS } from './shots.js';
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
 
-export const SAMPLES = [
-  { id: 'boulevard', name: 'Boulevard Queen', src: 'samples/boulevard.jpg' },
-  { id: 'pier', name: 'Pier Morning', src: 'samples/pier.jpg' },
-  { id: 'neon-boardwalk', name: 'Neon Boardwalk', src: 'samples/neon-boardwalk.jpg' },
-  { id: 'pier-day', name: 'Pier Day', src: 'samples/pier-day.jpg' },
-];
-
-const SWATCH = {
-  'vice-sunset': 'linear-gradient(135deg,#2b0a4a,#ff5e3a 55%,#ffd23f)',
-  'neon-nights': 'linear-gradient(135deg,#0c0828,#963cf0 55%,#78f0ff)',
-  'golden-hour': 'linear-gradient(135deg,#5a2d05,#ffb347 55%,#ffe9a8)',
-  'flamingo': 'linear-gradient(135deg,#3c0a46,#ff3ca0 55%,#ffc8e6)',
-  'teal-tide': 'linear-gradient(135deg,#06302e,#14c8b0 55%,#ff8a3c)',
-  'noir-pop': 'linear-gradient(135deg,#0a0a0c,#787880 55%,#ff2e88)',
-};
-
-const CAPTION_POOL = [
-  { title: 'SUNSET HEIST', subtitle: 'one last score', tagline: 'ONE CITY, EVERY LIGHT TELLS A STORY', kicker: '★ SOLMAR BAY ★', sticker: 'EST. 2026', ribbon: '', heat: 5, fill: 'sunset' },
-  { title: 'NEON NIGHTS', subtitle: 'welcome to the coast', tagline: 'THE BOARDWALK NEVER SLEEPS', kicker: '★ PALMA SHORES ★', sticker: 'NEW', ribbon: 'SAME TROUBLE', heat: 4, fill: 'chrome' },
-  { title: 'GOLDEN HOUR', subtitle: 'five crops, one snapshot', tagline: 'FIVE CROPS · ONE SNAPSHOT', kicker: 'ONE PHOTO · FIVE SHOTS', sticker: 'EST. 2026', ribbon: '', heat: 4, fill: 'sunset' },
-  { title: 'PARADISE / AFTER DARK', subtitle: 'the city doesn\'t sleep', tagline: 'TOP DOWN, FOOT DOWN', kicker: '★ SUNCOAST ★', sticker: 'LIMITED', ribbon: '', heat: 5, fill: 'white' },
-  { title: 'VICE HEAT', subtitle: 'one night on the boulevard', tagline: 'EVERY STREET IS A STAGE', kicker: '★ LEONIDA ★', sticker: 'EST. 2026', ribbon: 'COLLECTORS', heat: 5, fill: 'sunset' },
-  { title: 'CORAL HEAT', subtitle: 'neon tides, golden streets', tagline: 'ONE CITY. EVERY LIGHT TELLS A STORY.', kicker: '★ CORAL BAY ★', sticker: 'VOL. 02', ribbon: 'SAME TROUBLE', heat: 4, fill: 'chrome' },
-];
-
-const PRESETS = [
-  { name: 'Sunset Heist', layout: 'sunset-grid', grade: 'vice-sunset', ink: 70, cap: 0 },
-  { name: 'Boulevard Queen', layout: 'mosaic-7', grade: 'golden-hour', ink: 75, cap: 2 },
-  { name: 'Neon Nights', layout: 'hero-three', grade: 'neon-nights', ink: 80, cap: 1 },
-];
-
-function defaultCaption() {
-  return { ...CAPTION_POOL[0], position: 'foot', titleScale: 1 };
-}
-
-function defaultState() {
-  return {
-    size: 'landscape',
-    layout: 'sunset-grid',
-    grade: 'vice-sunset',
-    ink: 70,
-    tilt: 1,
-    sliced: false,
-    slicedPhoto: 'boulevard',
-    effects: { grain: true, halftone: true, glow: false },
-    caption: defaultCaption(),
-    photos: SAMPLES.map((s) => ({ ...s })),
-    panels: [],
-    selected: 0,
-  };
-}
-
-let state = defaultState();
-const images = new Map();
-let uploadCount = 0;
-
-// ---------------------------------------------------------------- history
-const undoStack = [];
-const redoStack = [];
-function snapshot() {
-  return JSON.stringify({ ...state, photos: state.photos });
-}
-function pushHistory() {
-  undoStack.push(snapshot());
-  if (undoStack.length > 50) undoStack.shift();
-  redoStack.length = 0;
-  syncUndoButtons();
-}
-function restore(json) {
-  const s = JSON.parse(json);
-  state = { ...s, selected: Math.min(s.selected || 0, Math.max(0, (s.panels || []).length - 1)) };
-  syncAllControls();
-  render();
-}
-function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(snapshot());
-  restore(undoStack.pop());
-  syncUndoButtons();
-}
-function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(snapshot());
-  restore(redoStack.pop());
-  syncUndoButtons();
-}
-function syncUndoButtons() {
-  const u = document.getElementById('btn-undo');
-  const r = document.getElementById('btn-redo');
-  if (u) u.disabled = !undoStack.length;
-  if (r) r.disabled = !redoStack.length;
-}
-
-// ---------------------------------------------------------------- loading
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('failed to load ' + src));
+    img.onerror = () => reject(new Error('cannot load ' + src));
     img.src = src;
   });
 }
 
-async function loadFonts() {
-  const loads = [
-    document.fonts.load('100px Anton'),
-    document.fonts.load('40px Pacifico'),
-    document.fonts.load('400 20px Oswald'),
-    document.fonts.load('600 20px Oswald'),
-    document.fonts.load('700 20px Oswald'),
-  ];
-  await Promise.allSettled(loads);
-  await document.fonts.ready;
+function clone(o) {
+  return JSON.parse(JSON.stringify(o));
 }
 
-async function loadAllImages() {
-  for (const p of state.photos) {
-    if (!images.has(p.id)) {
-      try { images.set(p.id, await loadImage(p.src)); } catch (e) { /* missing photo stays blank */ }
-    }
-  }
+function defaultPanelState(n) {
+  return Array.from({ length: n }, () => ({ zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false }));
 }
 
-// ---------------------------------------------------------------- render
-const off = document.createElement('canvas');
-const preview = document.getElementById('preview');
-const shotCanvas = document.getElementById('shot-canvas');
+const state = {
+  size: 'landscape',
+  layout: 'sunset-grid',
+  grade: 'vice-sunset',
+  ink: 70,
+  halftone: true,
+  grain: true,
+  glow: true,
+  fillMode: 'order',
+  photos: [],
+  panelPhoto: [],
+  panelGrade: [],
+  panelState: [],
+  caption: clone(DEFAULT_CAPTION),
+  selected: 0,
+};
+
+let history = [];
+let historyIndex = -1;
 let renderTimer = null;
+let lastCanvasSize = '';
 
-function renderNow(target) {
-  const canvas = target || off;
-  renderCover(canvas, state, Object.fromEntries(images));
-  if (!target) {
-    // Scale the full-res render into the visible preview canvas.
-    preview.width = canvas.width;
-    preview.height = canvas.height;
-    const pctx = preview.getContext('2d');
-    pctx.drawImage(canvas, 0, 0);
-  }
-  updatePanelInfo();
+function snapshot() {
+  return JSON.stringify({
+    size: state.size, layout: state.layout, grade: state.grade, ink: state.ink,
+    halftone: state.halftone, grain: state.grain, glow: state.glow,
+    fillMode: state.fillMode, panelPhoto: state.panelPhoto,
+    panelGrade: state.panelGrade, panelState: state.panelState,
+    caption: state.caption, selected: state.selected,
+    photos: state.photos.map((p) => ({ file: p.file, name: p.name, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl ?? null })),
+  });
 }
 
-function render() {
-  renderNow();
+function pushHistory() {
+  history = history.slice(0, historyIndex + 1);
+  history.push(snapshot());
+  if (history.length > 50) history.shift();
+  historyIndex = history.length - 1;
 }
 
-function renderSoon() {
-  clearTimeout(renderTimer);
-  renderTimer = setTimeout(render, 120);
-}
-
-// ---------------------------------------------------------------- panels
-function regenPanels() {
-  const layout = layoutFor(state.size, state.layout);
-  const ids = state.photos.map((p) => p.id);
-  state.panels = assignPanels(layout, ids, state.sliced ? { sliced: true, slicedPhoto: state.slicedPhoto } : {});
-  state.selected = 0;
-}
-
-function applyShot(shot) {
-  const s = SHOTS[shot];
-  if (!s) return;
-  state = defaultState();
+async function restore(json) {
+  const s = JSON.parse(json);
   state.size = s.size;
   state.layout = s.layout;
   state.grade = s.grade;
   state.ink = s.ink;
-  state.tilt = s.tilt ?? 1;
-  state.effects = { ...s.effects };
-  state.caption = { ...s.caption };
-  state.sliced = !!s.sliced;
-  state.slicedPhoto = s.slicedPhoto || 'boulevard';
-  if (s.panels) {
-    state.panels = s.panels.map((p) => ({ ...p, crop: { ...p.crop } }));
-  } else {
-    regenPanels();
+  state.halftone = s.halftone;
+  state.grain = s.grain;
+  state.glow = s.glow;
+  state.fillMode = s.fillMode;
+  state.panelPhoto = s.panelPhoto;
+  state.panelGrade = s.panelGrade;
+  state.panelState = s.panelState;
+  state.caption = s.caption;
+  state.selected = s.selected;
+  state.photos = [];
+  for (const p of s.photos) {
+    const img = await loadImage(p.dataUrl ?? `samples/${p.file}`);
+    state.photos.push({ img, file: p.file, name: p.name, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl });
   }
-  state.selected = 0;
+  syncUI();
+  scheduleRender();
 }
 
-// ---------------------------------------------------------------- export
-function downloadBlob(blob, name) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-}
-
-function exportSize(sizeId) {
-  return new Promise((resolve) => {
-    const saved = { size: state.size, layout: state.layout };
-    state.size = sizeId;
-    if (state.layout === 'vice-file' && sizeId !== 'portrait') state.layout = 'sunset-grid';
-    const layout = layoutFor(state.size, state.layout);
-    const ids = state.photos.map((p) => p.id);
-    const panels = assignPanels(layout, ids, state.sliced ? { sliced: true, slicedPhoto: state.slicedPhoto } : {});
-    const exportState = { ...state, panels };
-    const c = document.createElement('canvas');
-    renderCover(c, exportState, Object.fromEntries(images));
-    state.size = saved.size;
-    state.layout = saved.layout;
-    c.toBlob((blob) => {
-      if (blob) downloadBlob(blob, `vice-cover-${sizeId}.png`);
-      resolve();
-    }, 'image/png');
-  });
-}
-
-async function exportAll() {
-  for (const sizeId of ['landscape', 'square', 'portrait']) {
-    // eslint-disable-next-line no-await-in-loop
-    await exportSize(sizeId);
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise((r) => setTimeout(r, 400));
+function undo() {
+  if (historyIndex > 0) {
+    historyIndex--;
+    restore(history[historyIndex]);
   }
 }
 
-// ---------------------------------------------------------------- UI build
-function el(tag, cls, text) {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-}
-
-function buildSamples() {
-  const list = document.getElementById('sample-list');
-  list.innerHTML = '';
-  state.photos.forEach((p) => {
-    const b = el('button', 'thumb');
-    b.dataset.id = p.id;
-    const img = el('img');
-    img.src = p.src;
-    img.alt = p.name;
-    const sp = el('span', null, p.name);
-    b.append(img, sp);
-    b.addEventListener('click', () => {
-      pushHistory();
-      const a = state.panels[state.selected];
-      if (a) a.photo = p.id;
-      state.slicedPhoto = p.id;
-      syncSamples();
-      render();
-    });
-    b.addEventListener('dblclick', () => {
-      pushHistory();
-      state.sliced = false;
-      state.panels.forEach((a) => { a.photo = p.id; });
-      render();
-    });
-    list.appendChild(b);
-  });
-  document.getElementById('photo-count').textContent = `${state.photos.length} loaded`;
-  syncSamples();
-}
-
-function syncSamples() {
-  const sel = state.panels[state.selected];
-  document.querySelectorAll('.thumb').forEach((t) => {
-    t.classList.toggle('selected', !!sel && t.dataset.id === sel.photo);
-  });
-}
-
-function layoutDiagram(layoutId) {
-  const geo = layoutFor('landscape', layoutId);
-  const W = 64;
-  const H = 40;
-  const rects = geo.panels.map((p) => {
-    const x = (p.x / 1920) * W;
-    const y = (p.y / 1080) * H;
-    const w = (p.w / 1920) * W;
-    const h = (p.h / 1080) * H;
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(2, w - 1).toFixed(1)}" height="${Math.max(2, h - 1).toFixed(1)}" fill="#ff7a1a" stroke="#ffd23f" stroke-width="0.6"/>`;
-  }).join('');
-  const band = geo.band
-    ? `<rect x="0" y="${((geo.band.y / 1080) * H).toFixed(1)}" width="${W}" height="${((geo.band.h / 1080) * H).toFixed(1)}" fill="#ff2e88" opacity="0.85"/>`
-    : '';
-  if (layoutId === 'vice-file') {
-    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect x="1" y="1" width="${W - 2}" height="${H - 2}" fill="#d6c298" stroke="#ffd23f"/><rect x="6" y="6" width="22" height="20" fill="#1c2440"/><rect x="32" y="6" width="26" height="12" fill="#c8102e"/><text x="32" y="36" font-size="7" fill="#1c2440" font-family="sans-serif">FILE</text></svg>`;
+function redo() {
+  if (historyIndex < history.length - 1) {
+    historyIndex++;
+    restore(history[historyIndex]);
   }
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${rects}${band}</svg>`;
 }
 
-function buildLayouts() {
-  const list = document.getElementById('layout-list');
-  list.innerHTML = '';
-  LAYOUTS.forEach((l) => {
-    const b = el('button', 'layout-btn');
-    b.dataset.id = l.id;
-    b.innerHTML = layoutDiagram(l.id);
-    const nm = el('span', null, l.name + (l.tallOnly ? ' (portrait)' : ''));
-    b.appendChild(nm);
-    b.addEventListener('click', () => {
-      pushHistory();
-      state.layout = l.id;
-      if (l.tallOnly) state.size = 'portrait';
-      state.sliced = l.id === 'five-panel' && state.size === 'square' ? state.sliced : false;
-      regenPanels();
-      syncAllControls();
-      render();
-    });
-    list.appendChild(b);
+function currentLayout() {
+  return layoutFor(state.size, state.layout);
+}
+
+function ensurePanels() {
+  const n = currentLayout().panels.length;
+  while (state.panelPhoto.length < n) state.panelPhoto.push(null);
+  while (state.panelGrade.length < n) state.panelGrade.push(null);
+  while (state.panelState.length < n) state.panelState.push({ zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false });
+  state.panelPhoto.length = n;
+  state.panelGrade.length = n;
+  state.panelState.length = n;
+  state.selected = Math.min(state.selected, n - 1);
+}
+
+function renderOpts(extra = {}) {
+  return {
+    sizeId: state.size,
+    layoutId: state.layout,
+    gradeId: state.grade,
+    ink: state.ink,
+    photos: state.photos,
+    panelPhoto: state.panelPhoto,
+    panelGrade: state.panelGrade,
+    panelState: state.panelState,
+    fillMode: state.fillMode,
+    caption: state.caption,
+    seed: 20261119,
+    ...extra,
+  };
+}
+
+function scheduleRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, 80);
+}
+
+function render() {
+  const canvas = $('preview');
+  const size = SIZES[state.size];
+  const maxDim = 960;
+  const scale = Math.min(1, maxDim / Math.max(size.w, size.h));
+  const w = Math.round(size.w * scale);
+  const h = Math.round(size.h * scale);
+  const key = `${w}x${h}`;
+  if (key !== lastCanvasSize) {
+    canvas.width = w;
+    canvas.height = h;
+    lastCanvasSize = key;
+  }
+  const ctx = canvas.getContext('2d');
+  ensurePanels();
+  renderCover(ctx, w, h, renderOpts());
+  const layout = currentLayout();
+  const photo = state.photos[state.panelPhoto[state.selected] ?? state.selected % Math.max(1, state.photos.length)];
+  $('panel-label').textContent = `${state.selected + 1} of ${layout.panels.length}`;
+  $('preview-hint').textContent = `Panel ${state.selected + 1} · ${photo ? photo.name : '—'} — drag to pan, scroll to zoom`;
+  $('photo-count').textContent = `(${state.photos.length}/8)`;
+}
+
+function syncUI() {
+  document.querySelectorAll('#size-pills button').forEach((b) => b.classList.toggle('active', b.dataset.size === state.size));
+  document.querySelectorAll('#layout-grid .layout-opt').forEach((b) => b.classList.toggle('active', b.dataset.layout === state.layout));
+  document.querySelectorAll('#grade-grid .grade-opt').forEach((b) => b.classList.toggle('active', b.dataset.grade === state.grade));
+  document.querySelectorAll('.fill-modes button').forEach((b) => b.classList.toggle('active', b.dataset.fill === state.fillMode));
+  document.querySelectorAll('#title-fill button').forEach((b) => b.classList.toggle('active', b.dataset.fill === state.caption.fill));
+  document.querySelectorAll('#title-pos button').forEach((b) => b.classList.toggle('active', b.dataset.pos === state.caption.position));
+  $('ink').value = state.ink;
+  $('ink-val').textContent = `${state.ink}%`;
+  $('tgl-halftone').checked = state.halftone;
+  $('tgl-grain').checked = state.grain;
+  $('tgl-glow').checked = state.glow;
+  $('cap-title').value = state.caption.title;
+  $('cap-subtitle').value = state.caption.subtitle;
+  $('cap-tagline').value = state.caption.tagline;
+  $('cap-kicker').value = state.caption.kicker;
+  $('cap-sticker').value = state.caption.sticker;
+  $('cap-ribbon').value = state.caption.ribbon;
+  $('title-count').textContent = `${state.caption.title.length}/40`;
+  $('title-size').value = state.caption.size;
+  $('title-size-val').textContent = `${state.caption.size}%`;
+  buildHeatStars();
+  buildThumbs();
+  syncPanelControls();
+}
+
+function syncPanelControls() {
+  const i = state.selected;
+  const st = state.panelState[i] ?? { zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false };
+  const sel = $('panel-photo');
+  sel.innerHTML = '';
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = 'Auto (fill order)';
+  sel.appendChild(auto);
+  state.photos.forEach((p, idx) => {
+    const o = document.createElement('option');
+    o.value = String(idx);
+    o.textContent = `${idx + 1} · ${p.name}`;
+    sel.appendChild(o);
   });
-}
-
-function buildGrades() {
-  const list = document.getElementById('grade-list');
-  list.innerHTML = '';
+  sel.value = state.panelPhoto[i] == null ? '' : String(state.panelPhoto[i]);
+  const gs = $('panel-grade');
+  gs.innerHTML = '';
+  const g0 = document.createElement('option');
+  g0.value = '';
+  g0.textContent = 'Global grade';
+  gs.appendChild(g0);
   GRADE_IDS.forEach((id) => {
-    const b = el('button', 'grade-btn');
-    b.dataset.id = id;
-    const sw = el('div', 'swatch');
-    sw.style.background = SWATCH[id];
-    b.append(sw, el('span', null, GRADES[id].label));
-    b.addEventListener('click', () => {
-      pushHistory();
-      state.grade = id;
-      syncGrades();
-      render();
-    });
-    list.appendChild(b);
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = GRADES[id].label;
+    gs.appendChild(o);
   });
+  gs.value = state.panelGrade[i] ?? '';
+  $('panel-zoom').value = Math.round((st.zoom ?? 1) * 100);
+  $('zoom-val').textContent = `${Math.round((st.zoom ?? 1) * 100)}%`;
+  $('panel-tilt').value = st.tilt ?? 0;
+  $('tilt-val').textContent = `${st.tilt ?? 0}°`;
 }
 
-function syncGrades() {
-  document.querySelectorAll('.grade-btn').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.id === state.grade);
-  });
-}
-
-function syncLayouts() {
-  document.querySelectorAll('.layout-btn').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.id === state.layout);
-  });
-}
-
-function buildSizes() {
-  const pills = document.getElementById('size-pills');
-  pills.innerHTML = '';
-  SIZE_IDS.forEach((id) => {
-    const b = el('button', null, SIZES[id].label.split(' ')[0]);
-    b.dataset.id = id;
-    b.addEventListener('click', () => {
-      pushHistory();
-      state.size = id;
-      if (state.layout === 'vice-file' && id !== 'portrait') state.layout = 'sunset-grid';
-      regenPanels();
-      syncAllControls();
-      render();
-    });
-    pills.appendChild(b);
-  });
-}
-
-function syncSizes() {
-  document.querySelectorAll('#size-pills button').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.id === state.size);
-  });
-  const s = SIZES[state.size];
-  document.getElementById('size-info').textContent = `${s.w} × ${s.h}`;
-  document.getElementById('export-hint').textContent = `Exports at ${s.w} × ${s.h} PNG. Sample cover loaded — swap in your own photos.`;
-}
-
-function buildHeat() {
-  const wrap = document.getElementById('heat-stars');
+function buildHeatStars() {
+  const wrap = $('heat-stars');
   wrap.innerHTML = '';
   for (let i = 1; i <= 5; i++) {
-    const b = el('button', null, '★');
-    b.dataset.v = i;
+    const b = document.createElement('button');
+    b.textContent = '★';
+    b.classList.toggle('lit', i <= state.caption.heat);
     b.addEventListener('click', () => {
-      pushHistory();
       state.caption.heat = i;
-      syncHeat();
-      render();
+      pushHistory();
+      buildHeatStars();
+      scheduleRender();
     });
     wrap.appendChild(b);
   }
 }
 
-function syncHeat() {
-  document.querySelectorAll('#heat-stars button').forEach((b) => {
-    b.classList.toggle('on', Number(b.dataset.v) <= (state.caption.heat ?? 5));
-  });
-}
-
-function buildPresets() {
-  const list = document.getElementById('preset-list');
-  list.innerHTML = '';
-  PRESETS.forEach((p, i) => {
-    const b = el('button', null, p.name);
+function buildThumbs() {
+  const wrap = $('thumbs');
+  wrap.innerHTML = '';
+  state.photos.forEach((p, idx) => {
+    const b = document.createElement('button');
+    b.className = 'thumb';
+    const img = document.createElement('img');
+    img.src = p.dataUrl ?? `samples/${p.file}`;
+    img.alt = p.name;
+    const span = document.createElement('span');
+    span.textContent = p.name;
+    b.appendChild(img);
+    b.appendChild(span);
     b.addEventListener('click', () => {
+      state.panelPhoto[state.selected] = idx;
       pushHistory();
-      state.layout = p.layout;
-      state.grade = p.grade;
-      state.ink = p.ink;
-      state.caption = { ...CAPTION_POOL[p.cap], position: 'foot', titleScale: 1 };
-      regenPanels();
-      syncAllControls();
-      render();
+      syncPanelControls();
+      scheduleRender();
     });
-    list.appendChild(b);
+    b.addEventListener('dblclick', () => {
+      state.fillMode = 'one-photo';
+      state.panelPhoto = state.panelPhoto.map(() => idx);
+      pushHistory();
+      syncUI();
+      scheduleRender();
+    });
+    wrap.appendChild(b);
   });
 }
 
-function updatePanelInfo() {
-  const layout = layoutFor(state.size, state.layout);
-  const total = layout.panels.length;
-  document.getElementById('panel-num').textContent = String(Math.min(state.selected + 1, total));
-  document.getElementById('panel-total').textContent = String(total);
-  const sel = state.panels[state.selected];
-  const photoSel = document.getElementById('panel-photo');
-  if (photoSel.options.length !== state.photos.length) {
-    photoSel.innerHTML = '';
-    state.photos.forEach((p) => {
-      const o = document.createElement('option');
-      o.value = p.id;
-      o.textContent = p.name;
-      photoSel.appendChild(o);
+function buildLayoutOptions() {
+  const grid = $('layout-grid');
+  grid.innerHTML = '';
+  LAYOUT_IDS.forEach((id) => {
+    const layout = LAYOUTS[id];
+    const b = document.createElement('button');
+    b.className = 'layout-opt';
+    b.dataset.layout = id;
+    const mini = document.createElement('canvas');
+    mini.className = 'mini';
+    mini.width = 120;
+    mini.height = 34;
+    const m = mini.getContext('2d');
+    m.fillStyle = '#12081f';
+    m.fillRect(0, 0, 120, 34);
+    layout.panels.forEach((p) => {
+      m.fillStyle = '#ff2e88';
+      m.fillRect(p.x * 120 + 1, p.y * 34 + 1, p.w * 120 - 2, p.h * 34 - 2);
     });
-    const gradeSel = document.getElementById('panel-grade');
-    gradeSel.innerHTML = '<option value="global">Global grade</option>';
-    GRADE_IDS.forEach((id) => {
-      const o = document.createElement('option');
-      o.value = id;
-      o.textContent = GRADES[id].label;
-      gradeSel.appendChild(o);
+    if (layout.titleBand) {
+      m.fillStyle = '#ffd23f';
+      m.fillRect(layout.titleBand.x * 120, layout.titleBand.y * 34, layout.titleBand.w * 120, layout.titleBand.h * 34);
+    }
+    b.appendChild(mini);
+    const label = document.createElement('span');
+    label.textContent = layout.label + (layout.tallOnly ? ' · tall' : '');
+    b.appendChild(label);
+    b.addEventListener('click', () => {
+      state.layout = id;
+      ensurePanels();
+      pushHistory();
+      syncUI();
+      scheduleRender();
     });
-  }
-  if (sel) {
-    photoSel.value = sel.photo || '';
-    document.getElementById('panel-grade').value = sel.grade || 'global';
-    const zoom = Math.round((sel.crop.zoom || 1) * 100);
-    document.getElementById('panel-zoom').value = String(zoom);
-    document.getElementById('zoom-val').textContent = `${zoom}%`;
-    const tilt = Math.round((state.tilt ?? 1) * 100);
-    document.getElementById('panel-tilt').value = String(tilt);
-    document.getElementById('tilt-val').textContent = `${tilt}%`;
-  }
-  syncSamples();
+    grid.appendChild(b);
+  });
 }
 
-function syncAllControls() {
-  syncGrades();
-  syncLayouts();
-  syncSizes();
-  syncHeat();
-  const c = state.caption;
-  document.getElementById('cap-title').value = c.title || '';
-  document.getElementById('cap-subtitle').value = c.subtitle || '';
-  document.getElementById('cap-tagline').value = c.tagline || '';
-  document.getElementById('cap-kicker').value = c.kicker || '';
-  document.getElementById('cap-sticker').value = c.sticker || '';
-  document.getElementById('cap-ribbon').value = c.ribbon || '';
-  document.getElementById('cap-fill').value = c.fill || 'sunset';
-  document.getElementById('cap-position').value = c.position || 'foot';
-  document.getElementById('cap-size').value = String(Math.round((c.titleScale ?? 1) * 100));
-  document.getElementById('title-counter').textContent = `${(c.title || '').length}/40`;
-  document.getElementById('ink').value = String(state.ink);
-  document.getElementById('ink-val').textContent = `${state.ink}%`;
-  document.getElementById('fx-halftone').checked = !!state.effects.halftone;
-  document.getElementById('fx-grain').checked = !!state.effects.grain;
-  document.getElementById('fx-glow').checked = !!state.effects.glow;
-  buildSamples();
-  updatePanelInfo();
+function buildGradeOptions() {
+  const grid = $('grade-grid');
+  grid.innerHTML = '';
+  GRADE_IDS.forEach((id) => {
+    const g = GRADES[id];
+    const b = document.createElement('button');
+    b.className = 'grade-opt';
+    b.dataset.grade = id;
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    const toCss = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+    sw.style.background = `linear-gradient(90deg, ${toCss(g.shadow)}, ${toCss(g.mid)}, ${toCss(g.high)})`;
+    b.appendChild(sw);
+    const label = document.createElement('span');
+    label.textContent = g.label;
+    b.appendChild(label);
+    b.addEventListener('click', () => {
+      state.grade = id;
+      pushHistory();
+      syncUI();
+      scheduleRender();
+    });
+    grid.appendChild(b);
+  });
 }
 
-// ---------------------------------------------------------------- events
-function bindEvents() {
-  document.getElementById('btn-undo').addEventListener('click', undo);
-  document.getElementById('btn-redo').addEventListener('click', redo);
+function applyPreset(name) {
+  const p = PRESETS[name];
+  if (!p) return;
+  state.layout = p.layout;
+  state.grade = p.grade;
+  state.size = p.size;
+  state.caption = clone(p.caption);
+  ensurePanels();
+  pushHistory();
+  syncUI();
+  scheduleRender();
+}
+
+function shuffleAll() {
+  const layouts = LAYOUT_IDS.filter((id) => !LAYOUTS[id].tallOnly || state.size === 'portrait' || state.size === 'story');
+  state.layout = layouts[Math.floor(Math.random() * layouts.length)];
+  state.grade = GRADE_IDS[Math.floor(Math.random() * GRADE_IDS.length)];
+  state.fillMode = ['order', 'one-photo', 'sliced'][Math.floor(Math.random() * 3)];
+  state.photos = [...state.photos].sort(() => Math.random() - 0.5);
+  ensurePanels();
+  pushHistory();
+  syncUI();
+  scheduleRender();
+}
+
+function download(canvas, filename) {
+  canvas.toBlob((blob) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, 'image/png');
+}
+
+function exportPNG(sizeId) {
+  const canvas = renderCoverToCanvas(sizeId, { ...renderOpts(), gradeCap: 960 });
+  download(canvas, `vice-cover-${sizeId}.png`);
+  return canvas;
+}
+
+async function addUploads(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    if (state.photos.length >= 8) {
+      const firstUpload = state.photos.findIndex((p) => p.dataUrl);
+      if (firstUpload === -1) break;
+      state.photos.splice(firstUpload, 1);
+    }
+    const dataUrl = await new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.readAsDataURL(file);
+    });
+    const img = await loadImage(dataUrl);
+    state.photos.push({ img, file: null, name: file.name.replace(/\.[^.]+$/, '').slice(0, 18), fx: 0.5, fy: 0.3, dataUrl });
+  }
+  pushHistory();
+  buildThumbs();
+  scheduleRender();
+}
+
+function wire() {
+  buildLayoutOptions();
+  buildGradeOptions();
+  $('size-pills').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-size]');
+    if (!b) return;
+    state.size = b.dataset.size;
+    ensurePanels();
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  });
+  document.querySelectorAll('.fill-modes button').forEach((b) => b.addEventListener('click', () => {
+    state.fillMode = b.dataset.fill;
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  }));
+  $('btn-samples').addEventListener('click', async () => {
+    await loadSamples();
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  });
+  $('upload').addEventListener('change', (e) => addUploads([...e.target.files]));
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length) addUploads([...e.dataTransfer.files]);
+  });
+  $('panel-prev').addEventListener('click', () => {
+    state.selected = (state.selected - 1 + currentLayout().panels.length) % currentLayout().panels.length;
+    syncPanelControls();
+    scheduleRender();
+  });
+  $('panel-next').addEventListener('click', () => {
+    state.selected = (state.selected + 1) % currentLayout().panels.length;
+    syncPanelControls();
+    scheduleRender();
+  });
+  $('panel-photo').addEventListener('change', (e) => {
+    state.panelPhoto[state.selected] = e.target.value === '' ? null : Number(e.target.value);
+    pushHistory();
+    scheduleRender();
+  });
+  $('panel-grade').addEventListener('change', (e) => {
+    state.panelGrade[state.selected] = e.target.value === '' ? null : e.target.value;
+    pushHistory();
+    scheduleRender();
+  });
+  $('panel-zoom').addEventListener('input', (e) => {
+    state.panelState[state.selected].zoom = Number(e.target.value) / 100;
+    $('zoom-val').textContent = `${e.target.value}%`;
+    scheduleRender();
+  });
+  $('panel-zoom').addEventListener('change', () => pushHistory());
+  $('panel-tilt').addEventListener('input', (e) => {
+    state.panelState[state.selected].tilt = Number(e.target.value);
+    $('tilt-val').textContent = `${e.target.value}°`;
+    scheduleRender();
+  });
+  $('panel-tilt').addEventListener('change', () => pushHistory());
+  $('panel-flip').addEventListener('click', () => {
+    const st = state.panelState[state.selected];
+    st.flip = !st.flip;
+    pushHistory();
+    scheduleRender();
+  });
+  $('panel-reset').addEventListener('click', () => {
+    state.panelState[state.selected] = { zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false };
+    state.panelPhoto[state.selected] = null;
+    state.panelGrade[state.selected] = null;
+    pushHistory();
+    syncPanelControls();
+    scheduleRender();
+  });
+  $('panel-all').addEventListener('click', () => {
+    const st = clone(state.panelState[state.selected]);
+    const ph = state.panelPhoto[state.selected];
+    const gr = state.panelGrade[state.selected];
+    state.panelState = state.panelState.map(() => clone(st));
+    state.panelPhoto = state.panelPhoto.map(() => ph);
+    state.panelGrade = state.panelGrade.map(() => gr);
+    pushHistory();
+    scheduleRender();
+  });
+  $('ink').addEventListener('input', (e) => {
+    state.ink = Number(e.target.value);
+    $('ink-val').textContent = `${state.ink}%`;
+    scheduleRender();
+  });
+  $('ink').addEventListener('change', () => pushHistory());
+  $('tgl-halftone').addEventListener('change', (e) => { state.halftone = e.target.checked; pushHistory(); scheduleRender(); });
+  $('tgl-grain').addEventListener('change', (e) => { state.grain = e.target.checked; pushHistory(); scheduleRender(); });
+  $('tgl-glow').addEventListener('change', (e) => { state.glow = e.target.checked; pushHistory(); scheduleRender(); });
+  const bindCaption = (id, key) => {
+    $(id).addEventListener('input', (e) => {
+      state.caption[key] = e.target.value;
+      if (key === 'title') $('title-count').textContent = `${e.target.value.length}/40`;
+      scheduleRender();
+    });
+    $(id).addEventListener('change', () => pushHistory());
+  };
+  bindCaption('cap-title', 'title');
+  bindCaption('cap-subtitle', 'subtitle');
+  bindCaption('cap-tagline', 'tagline');
+  bindCaption('cap-kicker', 'kicker');
+  bindCaption('cap-sticker', 'sticker');
+  bindCaption('cap-ribbon', 'ribbon');
+  document.querySelectorAll('#title-fill button').forEach((b) => b.addEventListener('click', () => {
+    state.caption.fill = b.dataset.fill;
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  }));
+  document.querySelectorAll('#title-pos button').forEach((b) => b.addEventListener('click', () => {
+    state.caption.position = b.dataset.pos;
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  }));
+  $('title-size').addEventListener('input', (e) => {
+    state.caption.size = Number(e.target.value);
+    $('title-size-val').textContent = `${e.target.value}%`;
+    scheduleRender();
+  });
+  $('title-size').addEventListener('change', () => pushHistory());
+  document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
+  $('btn-shuffle').addEventListener('click', shuffleAll);
+  $('btn-surprise').addEventListener('click', () => {
+    applyPreset(['sunset-heist', 'boulevard-queen', 'neon-nights'][Math.floor(Math.random() * 3)]);
+    shuffleAll();
+  });
+  $('btn-undo').addEventListener('click', undo);
+  $('btn-redo').addEventListener('click', redo);
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
     if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   });
-  document.getElementById('btn-shuffle').addEventListener('click', () => {
-    pushHistory();
-    shuffle(false);
+  $('btn-export').addEventListener('click', () => exportPNG(state.size));
+  $('btn-export-all').addEventListener('click', () => {
+    for (const sizeId of ['landscape', 'square', 'portrait']) exportPNG(sizeId);
   });
-  document.getElementById('btn-surprise').addEventListener('click', () => {
-    pushHistory();
-    shuffle(true);
+  // Drag to pan / scroll to zoom on the preview.
+  const canvas = $('preview');
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    const layout = currentLayout();
+    const idx = layout.panels.findIndex((p) => fx >= p.x && fx <= p.x + p.w && fy >= p.y && fy <= p.y + p.h);
+    if (idx === -1) return;
+    state.selected = idx;
+    syncPanelControls();
+    drag = { x: e.clientX, y: e.clientY, panX: state.panelState[idx].panX, panY: state.panelState[idx].panY };
+    canvas.setPointerCapture(e.pointerId);
   });
-  document.getElementById('btn-export').addEventListener('click', () => exportSize(state.size));
-  document.getElementById('btn-export-2').addEventListener('click', () => exportSize(state.size));
-  document.getElementById('btn-export-all').addEventListener('click', exportAll);
-  document.getElementById('btn-export-all-2').addEventListener('click', exportAll);
-
-  document.getElementById('upload').addEventListener('change', async (e) => {
-    const files = [...e.target.files].slice(0, 8 - state.photos.length);
-    if (!files.length) return;
-    pushHistory();
-    for (const f of files) {
-      const dataUrl = await new Promise((res) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.readAsDataURL(f);
-      });
-      const id = `up-${++uploadCount}`;
-      const photo = { id, name: f.name.replace(/\.[^.]+$/, '').slice(0, 18) || 'Uploaded', src: dataUrl };
-      state.photos.push(photo);
-      images.set(id, await loadImage(dataUrl));
-    }
-    regenPanels();
-    buildSamples();
-    syncAllControls();
-    render();
-    e.target.value = '';
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const rect = canvas.getBoundingClientRect();
+    const st = state.panelState[state.selected];
+    st.panX = Math.max(-1, Math.min(1, drag.panX + ((e.clientX - drag.x) / rect.width) * 2));
+    st.panY = Math.max(-1, Math.min(1, drag.panY + ((e.clientY - drag.y) / rect.height) * 2));
+    scheduleRender();
   });
-
-  document.getElementById('btn-fill-order').addEventListener('click', () => {
-    pushHistory();
-    state.sliced = false;
-    const ids = state.photos.map((p) => p.id);
-    state.panels.forEach((a, i) => { a.photo = ids[i % ids.length]; });
-    render();
+  canvas.addEventListener('pointerup', () => {
+    if (drag) { drag = null; pushHistory(); }
   });
-  document.getElementById('btn-one-all').addEventListener('click', () => {
-    pushHistory();
-    state.sliced = false;
-    const sel = state.panels[state.selected];
-    if (sel) state.panels.forEach((a) => { a.photo = sel.photo; });
-    render();
-  });
-  document.getElementById('btn-sliced').addEventListener('click', () => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    state.sliced = true;
-    state.slicedPhoto = (sel && sel.photo) || state.photos[0].id;
-    regenPanels();
-    render();
-  });
-
-  document.getElementById('ink').addEventListener('input', (e) => {
-    state.ink = Number(e.target.value);
-    document.getElementById('ink-val').textContent = `${state.ink}%`;
-    renderSoon();
-  });
-  document.getElementById('ink').addEventListener('change', () => pushHistory());
-  const fx = (id, key) => {
-    document.getElementById(id).addEventListener('change', (e) => {
-      pushHistory();
-      state.effects[key] = e.target.checked;
-      render();
-    });
-  };
-  fx('fx-halftone', 'halftone');
-  fx('fx-grain', 'grain');
-  fx('fx-glow', 'glow');
-
-  const capInput = (id, key, push = false) => {
-    document.getElementById(id).addEventListener('input', (e) => {
-      state.caption[key] = e.target.value;
-      if (key === 'title') document.getElementById('title-counter').textContent = `${e.target.value.length}/40`;
-      renderSoon();
-    });
-    document.getElementById(id).addEventListener('change', () => { if (push) pushHistory(); });
-  };
-  capInput('cap-title', 'title', true);
-  capInput('cap-subtitle', 'subtitle', true);
-  capInput('cap-tagline', 'tagline', true);
-  capInput('cap-kicker', 'kicker', true);
-  capInput('cap-sticker', 'sticker', true);
-  capInput('cap-ribbon', 'ribbon', true);
-  document.getElementById('cap-fill').addEventListener('change', (e) => {
-    pushHistory();
-    state.caption.fill = e.target.value;
-    render();
-  });
-  document.getElementById('cap-position').addEventListener('change', (e) => {
-    pushHistory();
-    state.caption.position = e.target.value;
-    render();
-  });
-  document.getElementById('cap-size').addEventListener('input', (e) => {
-    state.caption.titleScale = Number(e.target.value) / 100;
-    renderSoon();
-  });
-  document.getElementById('cap-size').addEventListener('change', () => pushHistory());
-
-  document.getElementById('panel-photo').addEventListener('change', (e) => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    if (sel) { sel.photo = e.target.value; state.sliced = false; }
-    render();
-  });
-  document.getElementById('panel-grade').addEventListener('change', (e) => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    if (sel) sel.grade = e.target.value;
-    render();
-  });
-  document.getElementById('panel-zoom').addEventListener('input', (e) => {
-    const sel = state.panels[state.selected];
-    if (sel) {
-      sel.crop.zoom = Number(e.target.value) / 100;
-      document.getElementById('zoom-val').textContent = `${e.target.value}%`;
-      renderSoon();
-    }
-  });
-  document.getElementById('panel-zoom').addEventListener('change', () => pushHistory());
-  document.getElementById('panel-tilt').addEventListener('input', (e) => {
-    state.tilt = Number(e.target.value) / 100;
-    document.getElementById('tilt-val').textContent = `${e.target.value}%`;
-    renderSoon();
-  });
-  document.getElementById('panel-tilt').addEventListener('change', () => pushHistory());
-  document.getElementById('btn-flip').addEventListener('click', () => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    if (sel) sel.crop.flip = !sel.crop.flip;
-    render();
-  });
-  document.getElementById('btn-reset-panel').addEventListener('click', () => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    if (sel) sel.crop = { panX: 0, panY: 0, zoom: 1, flip: false };
-    render();
-  });
-  document.getElementById('btn-use-all').addEventListener('click', () => {
-    pushHistory();
-    const sel = state.panels[state.selected];
-    if (sel) state.panels.forEach((a) => { a.photo = sel.photo; });
-    render();
-  });
-
-  // Preview interaction: click selects, drag pans, wheel zooms.
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
-  const toCover = (e) => {
-    const rect = preview.getBoundingClientRect();
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * preview.width,
-      y: ((e.clientY - rect.top) / rect.height) * preview.height,
-    };
-  };
-  preview.addEventListener('pointerdown', (e) => {
-    const p = toCover(e);
-    const layout = layoutFor(state.size, state.layout);
-    const idx = layout.panels.findIndex((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
-    if (idx >= 0) {
-      state.selected = idx;
-      updatePanelInfo();
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      preview.setPointerCapture(e.pointerId);
-    }
-  });
-  preview.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    const sel = state.panels[state.selected];
-    if (!sel) return;
-    const rect = preview.getBoundingClientRect();
-    const dx = ((e.clientX - lastX) / rect.width) * preview.width;
-    const dy = ((e.clientY - lastY) / rect.height) * preview.height;
-    const layout = layoutFor(state.size, state.layout);
-    const panel = layout.panels[state.selected];
-    sel.crop.panX = Math.max(-1, Math.min(1, sel.crop.panX + (dx / panel.w) * 2));
-    sel.crop.panY = Math.max(-1, Math.min(1, sel.crop.panY + (dy / panel.h) * 2));
-    lastX = e.clientX;
-    lastY = e.clientY;
-    renderSoon();
-  });
-  preview.addEventListener('pointerup', () => { dragging = false; });
-  preview.addEventListener('wheel', (e) => {
+  canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const sel = state.panels[state.selected];
-    if (!sel) return;
-    sel.crop.zoom = Math.max(1, Math.min(2.5, (sel.crop.zoom || 1) + (e.deltaY < 0 ? 0.1 : -0.1)));
-    renderSoon();
+    const st = state.panelState[state.selected];
+    st.zoom = Math.max(1, Math.min(3, st.zoom * (1 - e.deltaY * 0.001)));
+    $('panel-zoom').value = Math.round(st.zoom * 100);
+    $('zoom-val').textContent = `${Math.round(st.zoom * 100)}%`;
+    scheduleRender();
   }, { passive: false });
 }
 
-function shuffle(withSize) {
-  const rnd = Math.random;
-  const layoutIds = LAYOUTS.map((l) => l.id);
-  state.layout = layoutIds[Math.floor(rnd() * layoutIds.length)];
-  if (state.layout === 'vice-file') state.size = 'portrait';
-  else if (withSize) state.size = ['landscape', 'square', 'portrait'][Math.floor(rnd() * 3)];
-  state.grade = GRADE_IDS[Math.floor(rnd() * GRADE_IDS.length)];
-  state.ink = 60 + Math.floor(rnd() * 41);
-  const cap = CAPTION_POOL[Math.floor(rnd() * CAPTION_POOL.length)];
-  state.caption = { ...cap, position: 'foot', titleScale: 1 };
-  regenPanels();
-  syncAllControls();
-  render();
-}
-
-// ---------------------------------------------------------------- boot
-async function boot() {
-  const params = new URLSearchParams(window.location.search);
-  const shot = params.get('shot');
-  if (shot && SHOTS[shot]) applyShot(shot);
-  else regenPanels();
-  buildSamples();
-  buildLayouts();
-  buildGrades();
-  buildSizes();
-  buildHeat();
-  buildPresets();
-  bindEvents();
-  syncAllControls();
-  syncUndoButtons();
-  await loadFonts();
-  await loadAllImages();
-  if (shot && SHOTS[shot] && shot !== 'editor') {
-    document.getElementById('app').hidden = true;
-    document.getElementById('shot-view').hidden = false;
-    renderNow(shotCanvas);
-  } else {
-    render();
+async function loadSamples() {
+  state.photos = [];
+  for (const s of SAMPLES) {
+    const img = await loadImage(`samples/${s.file}`);
+    state.photos.push({ img, file: s.file, name: s.name, fx: s.fx, fy: s.fy, dataUrl: null });
   }
-  window.__shotReady = true;
 }
 
-boot().catch((e) => {
-  console.error(e);
-  window.__shotReady = true;
-  window.__shotError = String(e);
+async function init() {
+  await document.fonts.ready;
+  await loadSamples();
+  ensurePanels();
+  wire();
+  syncUI();
+  pushHistory();
+  render();
+  if (params.get('shot')) {
+    const shots = await import('./shots.js');
+    await shots.runShot(params, state, {
+      loadSamples, renderOpts, scheduleRender, render, syncUI, ensurePanels,
+    });
+  }
+}
+
+init().catch((err) => {
+  console.error(err);
+  document.body.dataset.error = String(err?.message ?? err);
 });

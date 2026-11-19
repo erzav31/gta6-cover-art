@@ -1,81 +1,117 @@
-// Deterministic screenshot presets for Vice Cover Studio v2.
-// Each shot is a full editor state: size, layout, grade, caption and a
-// per-panel photo plan. Every shot has a DIFFERENT caption (title,
-// subtitle and tagline never repeat across shots).
+// Fixed scenes for screenshots + the all-combos verify probe.
+// ?shot=cover|editor|square|portrait renders one SHOTS preset and sets
+// window.__shotReady. ?shot=verify renders every layout x size x grade
+// combo in-page and reports window.__probeResults.
+import { GRADES, GRADE_IDS } from './grades.js';
+import { SIZES, LAYOUTS, LAYOUT_IDS, layoutFor } from './layouts.js';
+import { renderCover, renderCoverToCanvas } from './render.js';
+import { SHOTS } from './presets.js';
 
-export const SHOTS = {
-  // 1-cover.jpg — landscape Sunset Grid, four different photos, the
-  // strongest cover first: gradient title + script + tagline + band.
-  cover: {
-    size: 'landscape', layout: 'sunset-grid', grade: 'vice-sunset', ink: 70,
-    tilt: 1, effects: { grain: true, halftone: true, glow: false },
-    caption: {
-      title: 'SUNSET HEIST', subtitle: 'one last score',
-      tagline: 'ONE CITY, EVERY LIGHT TELLS A STORY', kicker: '★ SOLMAR BAY ★',
-      sticker: 'EST. 2026', ribbon: '', heat: 5, fill: 'sunset',
-      position: 'foot', titleScale: 1,
-    },
-    // 6 panels: hero + 2 + 3, four different photos, no two neighbours
-    // share the same photo with the same crop.
-    panels: [
-      { photo: 'boulevard', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'neon-boardwalk', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier-day', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'boulevard', crop: { panX: 0.7, panY: 0, zoom: 1.4, flip: false }, grade: 'global' },
-      { photo: 'pier', crop: { panX: -0.6, panY: 0, zoom: 1.4, flip: false }, grade: 'global' },
-    ],
-  },
-  // 2-editor.jpg — the dense editor, live preview of a DIFFERENT cover
-  // (Mosaic 7, Neon Nights) so the judge sees the app at work.
-  editor: {
-    size: 'landscape', layout: 'mosaic-7', grade: 'neon-nights', ink: 80,
-    tilt: 1, effects: { grain: true, halftone: true, glow: true },
-    caption: {
-      title: 'NEON NIGHTS', subtitle: 'welcome to the coast',
-      tagline: 'THE BOARDWALK NEVER SLEEPS', kicker: '★ PALMA SHORES ★',
-      sticker: 'NEW', ribbon: 'SAME TROUBLE', heat: 4, fill: 'chrome',
-      position: 'foot', titleScale: 1,
-    },
-    panels: [
-      { photo: 'boulevard', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'neon-boardwalk', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier-day', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'boulevard', crop: { panX: -0.7, panY: 0, zoom: 1.4, flip: false }, grade: 'global' },
-      { photo: 'pier', crop: { panX: 0.6, panY: 0, zoom: 1.4, flip: false }, grade: 'global' },
-      { photo: 'neon-boardwalk', crop: { panX: 0.5, panY: 0, zoom: 1.3, flip: false }, grade: 'global' },
-    ],
-  },
-  // 3-cover-square.jpg — "Five Shots": one photo sliced into five
-  // vertical strips, title band overlaid across the middle.
-  square: {
-    size: 'square', layout: 'five-panel', grade: 'golden-hour', ink: 75,
-    tilt: 1, effects: { grain: true, halftone: true, glow: false },
-    caption: {
-      title: 'GOLDEN HOUR', subtitle: 'five crops, one snapshot',
-      tagline: 'FIVE CROPS · ONE SNAPSHOT', kicker: 'ONE PHOTO · FIVE SHOTS',
-      sticker: 'EST. 2026', ribbon: '', heat: 4, fill: 'sunset',
-      position: 'foot', titleScale: 1,
-    },
-    sliced: true, slicedPhoto: 'boulevard',
-  },
-  // 4-cover-portrait.jpg — Vice File police case-file genre.
-  portrait: {
-    size: 'portrait', layout: 'vice-file', grade: 'noir-pop', ink: 80,
-    tilt: 1, effects: { grain: true, halftone: true, glow: false },
-    caption: {
-      title: 'THE BOULEVARD JOB', subtitle: 'case file 07 — open',
-      tagline: 'SUBJECT LAST SEEN AT SUNSET', kicker: 'VICE CITY · EST. 2026',
-      sticker: 'EST. 2026', ribbon: '', heat: 4, fill: 'sunset',
-      position: 'foot', titleScale: 1,
-    },
-    panels: [
-      { photo: 'boulevard', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-      { photo: 'pier-day', crop: { panX: 0, panY: 0, zoom: 1, flip: false }, grade: 'global' },
-    ],
-  },
-};
+function clone(o) {
+  return JSON.parse(JSON.stringify(o));
+}
 
-export const SHOT_NAMES = Object.keys(SHOTS);
+function applyPreset(state, preset) {
+  state.size = preset.size;
+  state.layout = preset.layout;
+  state.grade = preset.grade;
+  state.ink = preset.ink;
+  state.fillMode = preset.fillMode;
+  state.caption = clone(preset.caption);
+  const layout = layoutFor(state.size, state.layout);
+  const n = layout.panels.length;
+  state.panelPhoto = Array.from({ length: n }, () => null);
+  state.panelGrade = Array.from({ length: n }, () => null);
+  state.panelState = Array.from({ length: n }, () => ({ zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false }));
+  state.selected = 0;
+}
+
+function brightnessStats(canvas) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  let sum = 0;
+  let sum2 = 0;
+  const n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    sum += lum;
+    sum2 += lum * lum;
+  }
+  const mean = sum / n;
+  const variance = Math.max(0, sum2 / n - mean * mean);
+  return { mean: Math.round(mean * 10) / 10, stddev: Math.round(Math.sqrt(variance) * 10) / 10 };
+}
+
+async function runVerify(state, helpers) {
+  const results = [];
+  const sizes = ['landscape', 'square', 'portrait', 'story'];
+  const canvas = document.createElement('canvas');
+  for (const layoutId of LAYOUT_IDS) {
+    for (const sizeId of sizes) {
+      const layout = LAYOUTS[layoutId];
+      if (layout.tallOnly && sizeId !== 'portrait' && sizeId !== 'story') continue;
+      for (const gradeId of GRADE_IDS) {
+        try {
+          const size = SIZES[sizeId];
+          const scale = Math.min(1, 480 / Math.max(size.w, size.h));
+          canvas.width = Math.round(size.w * scale);
+          canvas.height = Math.round(size.h * scale);
+          const ctx = canvas.getContext('2d');
+          const opts = helpers.renderOpts({
+            sizeId, layoutId, gradeId,
+            caption: { ...state.caption, title: 'VERIFY', subtitle: 'probe', tagline: 'PROBE', kicker: 'TEST' },
+          });
+          renderCover(ctx, canvas.width, canvas.height, opts);
+          const stats = brightnessStats(canvas);
+          results.push({ layout: layoutId, size: sizeId, grade: gradeId, ok: stats.stddev > 5, ...stats });
+        } catch (err) {
+          results.push({ layout: layoutId, size: sizeId, grade: gradeId, ok: false, error: String(err?.message ?? err) });
+        }
+      }
+    }
+  }
+  // Export path: full-size render + PNG byte size.
+  try {
+    const big = renderCoverToCanvas('landscape', helpers.renderOpts({ gradeCap: 960 }));
+    const bytes = await new Promise((resolve) => big.toBlob((b) => resolve(b ? b.size : -1), 'image/png'));
+    results.push({ export: 'landscape-png', ok: bytes > 100000, bytes });
+  } catch (err) {
+    results.push({ export: 'landscape-png', ok: false, error: String(err?.message ?? err) });
+  }
+  window.__probeResults = results;
+  window.__shotReady = true;
+}
+
+export async function runShot(params, state, helpers) {
+  const shot = params.get('shot') ?? 'cover';
+  try {
+    await helpers.loadSamples();
+    if (shot === 'verify') {
+      await document.fonts.ready;
+      await runVerify(state, helpers);
+      return;
+    }
+    const preset = SHOTS[shot] ?? SHOTS.cover;
+    applyPreset(state, preset);
+    await document.fonts.ready;
+    if (shot === 'editor') {
+      helpers.syncUI();
+      helpers.render();
+    } else {
+      document.body.classList.add('shot-cover');
+      const canvas = document.getElementById('preview');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const ctx = canvas.getContext('2d');
+      renderCover(ctx, canvas.width, canvas.height, helpers.renderOpts());
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => { window.__shotReady = true; }));
+  } catch (err) {
+    console.error(err);
+    window.__shotError = String(err?.message ?? err);
+    window.__shotReady = true;
+  }
+}
+
+export { GRADES };
