@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-cover-art-01/erzav31/gta6-cover-art/rank.svg)](https://make.fun/bounty/gta6-cover-art-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-cover-art-01)
 [![reward](https://make.fun/badge/gta6-cover-art-01/erzav31/gta6-cover-art/reward.svg)](https://make.fun/bounty/gta6-cover-art-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-cover-art-01)
 
-Vice Cover Studio v2 — turn your photos into GTA-style multi-panel cover art: Poster Ink duotone grades, six layouts (including a Vice File police case-file genre), giant gradient titles with neon script, and PNG export in 1080×1080, 1080×1350 and 1920×1080. Offline, no uploads, no Rockstar assets — fonts Anton, Pacifico and Oswald under the SIL Open Font License.
+Vice Cover Studio v3 — turn your photos into GTA-style multi-panel cover art: Poster Ink duotone grades with halftone, seven layouts (including a Vice File police case-file genre and a Polaroid portrait mode), giant gradient titles with neon script and chrome fill, per-panel grades and crops, and PNG export in 1080×1080, 1080×1350 and 1920×1080. Eight named sample photos, undo/redo, shuffle, presets. Offline, no uploads, no Rockstar assets — fonts Anton, Pacifico and Oswald under the SIL Open Font License.
 
 ## Run it
 
