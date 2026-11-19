@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Vice Cover Studio — GTA-style cover maker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">
+      <span class="brand-mark">★</span>
+      <div>
+        <h1>VICE COVER STUDIO <span class="v2">v2</span></h1>
+        <p class="tagline">Your photos as a sunset crime-epic poster. Three steps, one PNG.</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-undo" title="Undo">↩ Undo</button>
+      <button id="btn-redo" title="Redo">↪ Redo</button>
+      <button id="btn-shuffle" title="Shuffle layout, grade and caption">🔀 Shuffle</button>
+      <button id="btn-surprise" title="Surprise me">🎲 Surprise me</button>
+      <button id="btn-export-all" class="primary">Export all 3 sizes</button>
+      <button id="btn-export" class="primary hot">Export PNG</button>
+    </div>
+  </header>
+
+  <main id="editor">
+    <aside id="left">
+      <section class="panel" id="sec-photos">
+        <h2>1 · Photos <span class="count" id="photo-count">4 loaded</span></h2>
+        <div id="sample-list" class="thumb-grid"></div>
+        <label class="upload-btn">+ Upload your photos
+          <input type="file" id="upload" accept="image/*" multiple hidden>
+        </label>
+        <div class="row-btns">
+          <button id="btn-fill-order">Fill panels in order</button>
+          <button id="btn-one-all">One photo, all panels</button>
+          <button id="btn-sliced">One photo, sliced</button>
+        </div>
+        <p class="hint">Click a photo to put it in the selected panel. Double-click to fill every panel.</p>
+      </section>
+
+      <section class="panel" id="sec-layout">
+        <h2>2 · Layout</h2>
+        <div id="layout-list" class="layout-grid"></div>
+      </section>
+
+      <section class="panel" id="sec-grade">
+        <h2>3 · Colour grade</h2>
+        <div id="grade-list" class="grade-grid"></div>
+        <label class="slider-row">Poster Ink
+          <input type="range" id="ink" min="0" max="100" value="70">
+          <span id="ink-val">70%</span>
+        </label>
+        <div class="toggles">
+          <label><input type="checkbox" id="fx-halftone" checked> Halftone dots</label>
+          <label><input type="checkbox" id="fx-grain" checked> Film grain</label>
+          <label><input type="checkbox" id="fx-glow"> Sunset glow</label>
+        </div>
+      </section>
+    </aside>
+
+    <section id="center">
+      <div id="size-bar">
+        <span class="size-label">Size</span>
+        <div id="size-pills" class="pills"></div>
+        <span id="size-info" class="size-info">1920 × 1080</span>
+      </div>
+      <div id="preview-wrap">
+        <canvas id="preview"></canvas>
+        <div id="preview-hint">Panel <span id="panel-num">1</span> of <span id="panel-total">6</span> — drag to pan · scroll to zoom · click a panel to select it</div>
+      </div>
+      <div id="panel-bar">
+        <label>Panel photo
+          <select id="panel-photo"></select>
+        </label>
+        <label>Grade
+          <select id="panel-grade"><option value="global">Global grade</option></select>
+        </label>
+        <label>Zoom <input type="range" id="panel-zoom" min="100" max="250" value="100"><span id="zoom-val">100%</span></label>
+        <label>Tilt <input type="range" id="panel-tilt" min="50" max="150" value="100"><span id="tilt-val">100%</span></label>
+        <button id="btn-flip">Flip ↔</button>
+        <button id="btn-reset-panel">Reset crop</button>
+        <button id="btn-use-all">Use in all panels</button>
+      </div>
+    </section>
+
+    <aside id="right">
+      <section class="panel" id="sec-caption">
+        <h2>4 · Caption</h2>
+        <label>Big title <span class="counter" id="title-counter">12/40</span>
+          <input type="text" id="cap-title" maxlength="40" value="SUNSET HEIST">
+        </label>
+        <label>Subtitle (script)
+          <input type="text" id="cap-subtitle" value="one last score">
+        </label>
+        <label>Tagline
+          <input type="text" id="cap-tagline" value="ONE CITY, EVERY LIGHT TELLS A STORY">
+        </label>
+        <label>Kicker / city
+          <input type="text" id="cap-kicker" value="★ SOLMAR BAY ★">
+        </label>
+        <div class="two-col">
+          <label>Sticker text
+            <input type="text" id="cap-sticker" value="EST. 2026">
+          </label>
+          <label>Ribbon text
+            <input type="text" id="cap-ribbon" value="" placeholder="SAME TROUBLE">
+          </label>
+        </div>
+        <div class="heat-row">
+          <span>Heat</span>
+          <div id="heat-stars" class="heat-stars"></div>
+        </div>
+        <label>Title fill
+          <select id="cap-fill">
+            <option value="sunset">Sunset gradient</option>
+            <option value="white">Solid white</option>
+            <option value="chrome">Chrome</option>
+          </select>
+        </label>
+        <div class="two-col">
+          <label>Title position
+            <select id="cap-position">
+              <option value="foot">Bottom band</option>
+              <option value="head">Top of band</option>
+            </select>
+          </label>
+          <label>Title size
+            <input type="range" id="cap-size" min="60" max="140" value="100">
+          </label>
+        </div>
+        <p class="hint">Tip: use <b>/</b> in the title for a two-line title, e.g. <i>Paradise / After Dark</i>.</p>
+      </section>
+
+      <section class="panel" id="sec-presets">
+        <h2>Presets</h2>
+        <div class="row-btns" id="preset-list"></div>
+      </section>
+
+      <section class="panel" id="sec-export">
+        <h2>5 · Export</h2>
+        <button id="btn-export-2" class="primary block">Export PNG — this size</button>
+        <button id="btn-export-all-2" class="block">Export all 3 sizes</button>
+        <p class="hint" id="export-hint">Exports at 1920 × 1080 PNG. Sample cover loaded — swap in your own photos.</p>
+      </section>
+
+      <p class="footer">Made with Vice Cover Studio · photos stay on your machine · fonts Anton, Pacifico, Oswald (SIL Open Font License) · an original fan-made tool, not affiliated with Rockstar Games</p>
+    </aside>
+  </main>
+</div>
+
+<!-- Cover-only mode for deterministic screenshots (?shot=cover|square|portrait) -->
+<div id="shot-view" hidden>
+  <canvas id="shot-canvas"></canvas>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
