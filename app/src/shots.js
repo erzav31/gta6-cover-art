@@ -20,7 +20,10 @@ function applyPreset(state, preset) {
   state.caption = clone(preset.caption);
   const layout = layoutFor(state.size, state.layout);
   const n = layout.panels.length;
-  state.panelPhoto = Array.from({ length: n }, () => null);
+  state.panelPhoto = preset.panelPhoto
+    ? preset.panelPhoto.slice(0, n)
+    : Array.from({ length: n }, () => null);
+  while (state.panelPhoto.length < n) state.panelPhoto.push(null);
   state.panelGrade = Array.from({ length: n }, () => null);
   state.panelState = Array.from({ length: n }, () => ({ zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false }));
   state.selected = 0;
@@ -71,13 +74,15 @@ async function runVerify(state, helpers) {
       }
     }
   }
-  // Export path: full-size render + PNG byte size.
-  try {
-    const big = renderCoverToCanvas('landscape', helpers.renderOpts({ gradeCap: 960 }));
-    const bytes = await new Promise((resolve) => big.toBlob((b) => resolve(b ? b.size : -1), 'image/png'));
-    results.push({ export: 'landscape-png', ok: bytes > 100000, bytes });
-  } catch (err) {
-    results.push({ export: 'landscape-png', ok: false, error: String(err?.message ?? err) });
+  // Export path: full-size render + PNG byte size, all three sizes.
+  for (const sizeId of ['landscape', 'square', 'portrait']) {
+    try {
+      const big = renderCoverToCanvas(sizeId, helpers.renderOpts({ gradeCap: 960 }));
+      const bytes = await new Promise((resolve) => big.toBlob((b) => resolve(b ? b.size : -1), 'image/png'));
+      results.push({ export: `${sizeId}-png`, ok: bytes > 100000, bytes });
+    } catch (err) {
+      results.push({ export: `${sizeId}-png`, ok: false, error: String(err?.message ?? err) });
+    }
   }
   window.__probeResults = results;
   window.__shotReady = true;

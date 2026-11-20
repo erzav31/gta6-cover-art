@@ -1,4 +1,4 @@
-// Poster Ink grades for Vice Cover Studio v3.
+// Poster Ink grades for Vice Cover Studio v4.
 // A grade is a three-stop duotone gradient map (shadow -> mid -> highlight)
 // applied by luminance, then posterized, then mixed back toward the photo
 // by the Poster Ink slider. Pure functions: no DOM, tested in Node.
@@ -56,9 +56,10 @@ export function buildLUT(grade) {
   return { r, g, b };
 }
 
-// Grade RGBA pixels in place. ink 0..100 mixes graded result back toward the
-// original photo (0 = untouched photo, 100 = full Poster Ink). Returns the
-// mean absolute per-channel change so tests can prove the grade is visible.
+// Grade RGBA pixels in place. ink 0..100 mixes the graded result back
+// toward the original photo (0 = untouched photo, 100 = full Poster Ink).
+// Returns the mean absolute per-channel change so tests can prove the
+// grade is visible.
 export function gradePixels(data, lut, posterize, ink) {
   const mix = Math.max(0, Math.min(100, ink)) / 100;
   const steps = Math.max(2, posterize);

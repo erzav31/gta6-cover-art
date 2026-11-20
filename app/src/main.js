@@ -1,5 +1,5 @@
-// Vice Cover Studio v3 — editor wiring. Loads the 8 samples, keeps the
-// state + undo history, renders the preview, and exports PNGs. When the
+// Vice Cover Studio v4 — editor wiring. Loads the 8 cast samples, keeps
+// the state + undo history, renders the preview, and exports PNGs. When the
 // page carries ?shot=…, the shot driver takes over instead.
 import { GRADES, GRADE_IDS } from './grades.js';
 import { SIZES, LAYOUTS, LAYOUT_IDS, layoutFor } from './layouts.js';
@@ -22,10 +22,6 @@ function clone(o) {
   return JSON.parse(JSON.stringify(o));
 }
 
-function defaultPanelState(n) {
-  return Array.from({ length: n }, () => ({ zoom: 1, panX: 0, panY: 0, tilt: 0, flip: false }));
-}
-
 const state = {
   size: 'landscape',
   layout: 'sunset-grid',
@@ -34,6 +30,8 @@ const state = {
   halftone: true,
   grain: true,
   glow: true,
+  faceSafe: true,
+  markFace: false,
   fillMode: 'order',
   photos: [],
   panelPhoto: [],
@@ -52,10 +50,10 @@ function snapshot() {
   return JSON.stringify({
     size: state.size, layout: state.layout, grade: state.grade, ink: state.ink,
     halftone: state.halftone, grain: state.grain, glow: state.glow,
-    fillMode: state.fillMode, panelPhoto: state.panelPhoto,
-    panelGrade: state.panelGrade, panelState: state.panelState,
-    caption: state.caption, selected: state.selected,
-    photos: state.photos.map((p) => ({ file: p.file, name: p.name, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl ?? null })),
+    faceSafe: state.faceSafe, fillMode: state.fillMode,
+    panelPhoto: state.panelPhoto, panelGrade: state.panelGrade,
+    panelState: state.panelState, caption: state.caption, selected: state.selected,
+    photos: state.photos.map((p) => ({ file: p.file, name: p.name, role: p.role, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl ?? null })),
   });
 }
 
@@ -75,6 +73,7 @@ async function restore(json) {
   state.halftone = s.halftone;
   state.grain = s.grain;
   state.glow = s.glow;
+  state.faceSafe = s.faceSafe;
   state.fillMode = s.fillMode;
   state.panelPhoto = s.panelPhoto;
   state.panelGrade = s.panelGrade;
@@ -84,7 +83,7 @@ async function restore(json) {
   state.photos = [];
   for (const p of s.photos) {
     const img = await loadImage(p.dataUrl ?? `samples/${p.file}`);
-    state.photos.push({ img, file: p.file, name: p.name, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl });
+    state.photos.push({ img, file: p.file, name: p.name, role: p.role, fx: p.fx, fy: p.fy, dataUrl: p.dataUrl });
   }
   syncUI();
   scheduleRender();
@@ -117,6 +116,16 @@ function ensurePanels() {
   state.panelGrade.length = n;
   state.panelState.length = n;
   state.selected = Math.min(state.selected, n - 1);
+  if (!Array.isArray(state.caption.tags)) state.caption.tags = [];
+  while (state.caption.tags.length < n) state.caption.tags.push('');
+  state.caption.tags.length = n;
+}
+
+function panelPhotoAt(i) {
+  if (state.panelPhoto[i] != null) return state.panelPhoto[i];
+  if (!state.photos.length) return -1;
+  if (state.fillMode === 'one-photo' || state.fillMode === 'sliced') return 0;
+  return i % state.photos.length;
 }
 
 function renderOpts(extra = {}) {
@@ -131,7 +140,8 @@ function renderOpts(extra = {}) {
     panelState: state.panelState,
     fillMode: state.fillMode,
     caption: state.caption,
-    seed: 20261119,
+    seed: 20261120,
+    toggles: { halftone: state.halftone, grain: state.grain, glow: state.glow, faceSafe: state.faceSafe },
     ...extra,
   };
 }
@@ -158,10 +168,13 @@ function render() {
   ensurePanels();
   renderCover(ctx, w, h, renderOpts());
   const layout = currentLayout();
-  const photo = state.photos[state.panelPhoto[state.selected] ?? state.selected % Math.max(1, state.photos.length)];
+  const pi = panelPhotoAt(state.selected);
+  const photo = pi >= 0 ? state.photos[pi] : null;
   $('panel-label').textContent = `${state.selected + 1} of ${layout.panels.length}`;
-  $('preview-hint').textContent = `Panel ${state.selected + 1} · ${photo ? photo.name : '—'} — drag to pan, scroll to zoom`;
-  $('photo-count').textContent = `(${state.photos.length}/8)`;
+  $('preview-hint').textContent = state.markFace
+    ? 'Mark face ON — click a face in the preview to set its focus point'
+    : `Panel ${state.selected + 1} · ${photo ? photo.name : '—'} — drag to pan, scroll to zoom`;
+  $('photo-count').textContent = `(${state.photos.length}/10)`;
 }
 
 function syncUI() {
@@ -169,13 +182,16 @@ function syncUI() {
   document.querySelectorAll('#layout-grid .layout-opt').forEach((b) => b.classList.toggle('active', b.dataset.layout === state.layout));
   document.querySelectorAll('#grade-grid .grade-opt').forEach((b) => b.classList.toggle('active', b.dataset.grade === state.grade));
   document.querySelectorAll('.fill-modes button').forEach((b) => b.classList.toggle('active', b.dataset.fill === state.fillMode));
-  document.querySelectorAll('#title-fill button').forEach((b) => b.classList.toggle('active', b.dataset.fill === state.caption.fill));
+  document.querySelectorAll('#title-style button').forEach((b) => b.classList.toggle('active', b.dataset.style === state.caption.fill));
   document.querySelectorAll('#title-pos button').forEach((b) => b.classList.toggle('active', b.dataset.pos === state.caption.position));
+  document.querySelectorAll('#title-place button').forEach((b) => b.classList.toggle('active', b.dataset.place === state.caption.placement));
+  document.querySelectorAll('#tag-kind button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.caption.tagKind));
   $('ink').value = state.ink;
   $('ink-val').textContent = `${state.ink}%`;
   $('tgl-halftone').checked = state.halftone;
   $('tgl-grain').checked = state.grain;
   $('tgl-glow').checked = state.glow;
+  $('tgl-facesafe').checked = state.faceSafe;
   $('cap-title').value = state.caption.title;
   $('cap-subtitle').value = state.caption.subtitle;
   $('cap-tagline').value = state.caption.tagline;
@@ -185,6 +201,26 @@ function syncUI() {
   $('title-count').textContent = `${state.caption.title.length}/40`;
   $('title-size').value = state.caption.size;
   $('title-size-val').textContent = `${state.caption.size}%`;
+  $('kit-quote').value = state.caption.quote;
+  $('kit-outlet').value = state.caption.outlet;
+  $('kit-billing').value = state.caption.billing;
+  $('kit-seal').value = state.caption.seal;
+  $('kit-vol').value = state.caption.vol;
+  $('kit-coming').value = state.caption.coming;
+  $('kit-roles').checked = state.caption.showRoles;
+  $('kit-quote-tgl').checked = state.caption.showQuote;
+  $('kit-billing-tgl').checked = state.caption.showBilling;
+  $('kit-seal-tgl').checked = state.caption.showSeal;
+  $('kit-barcode-tgl').checked = state.caption.showBarcode;
+  $('kit-vol-tgl').checked = state.caption.showVol;
+  $('kit-coming-tgl').checked = state.caption.showComing;
+  $('stat-drive').value = state.caption.stats?.drive ?? 5;
+  $('stat-nerve').value = state.caption.stats?.nerve ?? 4;
+  $('stat-luck').value = state.caption.stats?.luck ?? 2;
+  $('stat-drive-val').textContent = `${state.caption.stats?.drive ?? 5}/5`;
+  $('stat-nerve-val').textContent = `${state.caption.stats?.nerve ?? 4}/5`;
+  $('stat-luck-val').textContent = `${state.caption.stats?.luck ?? 2}/5`;
+  $('btn-mark-face').classList.toggle('active', state.markFace);
   buildHeatStars();
   buildThumbs();
   syncPanelControls();
@@ -223,6 +259,10 @@ function syncPanelControls() {
   $('zoom-val').textContent = `${Math.round((st.zoom ?? 1) * 100)}%`;
   $('panel-tilt').value = st.tilt ?? 0;
   $('tilt-val').textContent = `${st.tilt ?? 0}°`;
+  const pi = panelPhotoAt(i);
+  const photo = pi >= 0 ? state.photos[pi] : null;
+  $('panel-tag').value = (state.caption.tags && state.caption.tags[i]) ?? photo?.role ?? '';
+  $('panel-tag').placeholder = photo?.role ?? 'THE DRIVER';
 }
 
 function buildHeatStars() {
@@ -252,7 +292,7 @@ function buildThumbs() {
     img.src = p.dataUrl ?? `samples/${p.file}`;
     img.alt = p.name;
     const span = document.createElement('span');
-    span.textContent = p.name;
+    span.textContent = `${p.name} · ${p.role ?? ''}`;
     b.appendChild(img);
     b.appendChild(span);
     b.addEventListener('click', () => {
@@ -380,7 +420,7 @@ function exportPNG(sizeId) {
 async function addUploads(files) {
   for (const file of files) {
     if (!file.type.startsWith('image/')) continue;
-    if (state.photos.length >= 8) {
+    if (state.photos.length >= 10) {
       const firstUpload = state.photos.findIndex((p) => p.dataUrl);
       if (firstUpload === -1) break;
       state.photos.splice(firstUpload, 1);
@@ -391,7 +431,7 @@ async function addUploads(files) {
       r.readAsDataURL(file);
     });
     const img = await loadImage(dataUrl);
-    state.photos.push({ img, file: null, name: file.name.replace(/\.[^.]+$/, '').slice(0, 18), fx: 0.5, fy: 0.3, dataUrl });
+    state.photos.push({ img, file: null, name: file.name.replace(/\.[^.]+$/, '').slice(0, 18), role: 'THE NEW FACE', fx: 0.5, fy: 0.3, dataUrl });
   }
   pushHistory();
   buildThumbs();
@@ -484,6 +524,22 @@ function wire() {
     pushHistory();
     scheduleRender();
   });
+  $('panel-tag').addEventListener('input', (e) => {
+    state.caption.tags[state.selected] = e.target.value;
+    scheduleRender();
+  });
+  $('panel-tag').addEventListener('change', () => pushHistory());
+  document.querySelectorAll('#tag-kind button').forEach((b) => b.addEventListener('click', () => {
+    state.caption.tagKind = b.dataset.kind;
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  }));
+  $('btn-mark-face').addEventListener('click', () => {
+    state.markFace = !state.markFace;
+    syncUI();
+    scheduleRender();
+  });
   $('ink').addEventListener('input', (e) => {
     state.ink = Number(e.target.value);
     $('ink-val').textContent = `${state.ink}%`;
@@ -493,6 +549,7 @@ function wire() {
   $('tgl-halftone').addEventListener('change', (e) => { state.halftone = e.target.checked; pushHistory(); scheduleRender(); });
   $('tgl-grain').addEventListener('change', (e) => { state.grain = e.target.checked; pushHistory(); scheduleRender(); });
   $('tgl-glow').addEventListener('change', (e) => { state.glow = e.target.checked; pushHistory(); scheduleRender(); });
+  $('tgl-facesafe').addEventListener('change', (e) => { state.faceSafe = e.target.checked; pushHistory(); scheduleRender(); });
   const bindCaption = (id, key) => {
     $(id).addEventListener('input', (e) => {
       state.caption[key] = e.target.value;
@@ -507,8 +564,32 @@ function wire() {
   bindCaption('cap-kicker', 'kicker');
   bindCaption('cap-sticker', 'sticker');
   bindCaption('cap-ribbon', 'ribbon');
-  document.querySelectorAll('#title-fill button').forEach((b) => b.addEventListener('click', () => {
-    state.caption.fill = b.dataset.fill;
+  bindCaption('kit-quote', 'quote');
+  bindCaption('kit-outlet', 'outlet');
+  bindCaption('kit-billing', 'billing');
+  bindCaption('kit-seal', 'seal');
+  bindCaption('kit-vol', 'vol');
+  $('kit-coming').addEventListener('change', (e) => {
+    state.caption.coming = e.target.value;
+    pushHistory();
+    scheduleRender();
+  });
+  const bindToggle = (id, key) => {
+    $(id).addEventListener('change', (e) => {
+      state.caption[key] = e.target.checked;
+      pushHistory();
+      scheduleRender();
+    });
+  };
+  bindToggle('kit-roles', 'showRoles');
+  bindToggle('kit-quote-tgl', 'showQuote');
+  bindToggle('kit-billing-tgl', 'showBilling');
+  bindToggle('kit-seal-tgl', 'showSeal');
+  bindToggle('kit-barcode-tgl', 'showBarcode');
+  bindToggle('kit-vol-tgl', 'showVol');
+  bindToggle('kit-coming-tgl', 'showComing');
+  document.querySelectorAll('#title-style button').forEach((b) => b.addEventListener('click', () => {
+    state.caption.fill = b.dataset.style;
     pushHistory();
     syncUI();
     scheduleRender();
@@ -519,16 +600,33 @@ function wire() {
     syncUI();
     scheduleRender();
   }));
+  document.querySelectorAll('#title-place button').forEach((b) => b.addEventListener('click', () => {
+    state.caption.placement = b.dataset.place;
+    pushHistory();
+    syncUI();
+    scheduleRender();
+  }));
   $('title-size').addEventListener('input', (e) => {
     state.caption.size = Number(e.target.value);
     $('title-size-val').textContent = `${e.target.value}%`;
     scheduleRender();
   });
   $('title-size').addEventListener('change', () => pushHistory());
+  const bindStat = (id, key, valId) => {
+    $(id).addEventListener('input', (e) => {
+      state.caption.stats[key] = Number(e.target.value);
+      $(valId).textContent = `${e.target.value}/5`;
+      scheduleRender();
+    });
+    $(id).addEventListener('change', () => pushHistory());
+  };
+  bindStat('stat-drive', 'drive', 'stat-drive-val');
+  bindStat('stat-nerve', 'nerve', 'stat-nerve-val');
+  bindStat('stat-luck', 'luck', 'stat-luck-val');
   document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
   $('btn-shuffle').addEventListener('click', shuffleAll);
   $('btn-surprise').addEventListener('click', () => {
-    applyPreset(['sunset-heist', 'boulevard-queen', 'neon-nights'][Math.floor(Math.random() * 3)]);
+    applyPreset(['palm-fever', 'neon-overdrive', 'golden-coast'][Math.floor(Math.random() * 3)]);
     shuffleAll();
   });
   $('btn-undo').addEventListener('click', undo);
@@ -541,7 +639,7 @@ function wire() {
   $('btn-export-all').addEventListener('click', () => {
     for (const sizeId of ['landscape', 'square', 'portrait']) exportPNG(sizeId);
   });
-  // Drag to pan / scroll to zoom on the preview.
+  // Drag to pan / scroll to zoom on the preview; Mark face sets the focus.
   const canvas = $('preview');
   let drag = null;
   canvas.addEventListener('pointerdown', (e) => {
@@ -553,6 +651,18 @@ function wire() {
     if (idx === -1) return;
     state.selected = idx;
     syncPanelControls();
+    if (state.markFace) {
+      const pi = panelPhotoAt(idx);
+      const photo = pi >= 0 ? state.photos[pi] : null;
+      if (photo) {
+        const p = layout.panels[idx];
+        photo.fx = Math.max(0.05, Math.min(0.95, (fx - p.x) / p.w));
+        photo.fy = Math.max(0.05, Math.min(0.95, (fy - p.y) / p.h));
+        pushHistory();
+        scheduleRender();
+      }
+      return;
+    }
     drag = { x: e.clientX, y: e.clientY, panX: state.panelState[idx].panX, panY: state.panelState[idx].panY };
     canvas.setPointerCapture(e.pointerId);
   });
@@ -581,7 +691,7 @@ async function loadSamples() {
   state.photos = [];
   for (const s of SAMPLES) {
     const img = await loadImage(`samples/${s.file}`);
-    state.photos.push({ img, file: s.file, name: s.name, fx: s.fx, fy: s.fy, dataUrl: null });
+    state.photos.push({ img, file: s.file, name: s.name, role: s.role, fx: s.fx, fy: s.fy, dataUrl: null });
   }
 }
 
