@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vice Cover Studio v3 — GTA-style cover maker</title>
+<title>Vice Cover Studio v4 — GTA-style cover maker</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -11,7 +11,7 @@
 <header class="topbar">
   <div class="brand">
     <span class="logo">VICE COVER STUDIO</span>
-    <span class="tag">Your photos as a sunset crime-epic poster. Three steps, one PNG.</span>
+    <span class="tag">Your photos as a movie-poster cover. Three steps, one PNG.</span>
   </div>
   <div class="top-actions">
     <button id="btn-undo" title="Undo (Ctrl+Z)">↩ Undo</button>
@@ -24,12 +24,12 @@
 </header>
 <main class="editor">
   <section class="col photos-col">
-    <h2>1 · Photos <span class="count" id="photo-count"></span></h2>
+    <h2>1 · Cast <span class="count" id="photo-count"></span></h2>
     <div class="row">
       <label class="upload-btn">+ Add your photos
         <input type="file" id="upload" accept="image/*" multiple hidden>
       </label>
-      <button id="btn-samples">Load samples</button>
+      <button id="btn-samples">Load cast</button>
     </div>
     <div class="thumbs" id="thumbs"></div>
     <div class="fill-modes">
@@ -37,7 +37,7 @@
       <button data-fill="one-photo">One photo, all panels</button>
       <button data-fill="sliced">One photo, sliced</button>
     </div>
-    <p class="hint">Click a photo to put it in the selected panel. Double-click to fill every panel. 8 photos max.</p>
+    <p class="hint">Click a photo to put it in the selected panel. Double-click to fill every panel. 10 photos max. Every sample is a cast member with a role tag.</p>
     <h2>Selected panel</h2>
     <div class="field"><label>Panel <span id="panel-label">1 of 6</span></label>
       <div class="row">
@@ -47,6 +47,13 @@
     </div>
     <div class="field"><label>Photo in this panel</label><select id="panel-photo"></select></div>
     <div class="field"><label>Grade for this panel — each panel gets its own</label><select id="panel-grade"></select></div>
+    <div class="field"><label>Tag on this panel</label><input type="text" id="panel-tag" maxlength="24" placeholder="THE DRIVER"></div>
+    <div class="field"><label>Tag kind</label>
+      <div class="pills" id="tag-kind">
+        <button data-kind="role" class="active">Role tag</button>
+        <button data-kind="location">Location stamp</button>
+      </div>
+    </div>
     <div class="field"><label>Zoom <span id="zoom-val">100%</span></label>
       <input type="range" id="panel-zoom" min="100" max="300" value="100">
     </div>
@@ -58,7 +65,10 @@
       <button id="panel-reset">Reset panel</button>
       <button id="panel-all">Use in all panels</button>
     </div>
-    <p class="hint">Drag on the preview to pan · scroll to zoom · drop image files anywhere on this page.</p>
+    <div class="row">
+      <button id="btn-mark-face" title="Click a face in the preview to set its focus point">◎ Mark face</button>
+    </div>
+    <p class="hint">Drag on the preview to pan · scroll to zoom · drop image files anywhere on this page. Mark face sets where the face-safe crop aims.</p>
   </section>
 
   <section class="col preview-col">
@@ -69,12 +79,12 @@
       <button data-size="story">Story 1080×1920</button>
     </div>
     <div class="preview-wrap"><canvas id="preview" width="960" height="540"></canvas></div>
-    <p class="hint" id="preview-hint">Panel 1 · Boulevard Queen — drag to pan, scroll to zoom</p>
+    <p class="hint" id="preview-hint">Panel 1 · The Boss — drag to pan, scroll to zoom</p>
     <div class="presets">
       <span>Presets:</span>
-      <button data-preset="sunset-heist">Sunset Heist</button>
-      <button data-preset="boulevard-queen">Boulevard Queen</button>
-      <button data-preset="neon-nights">Neon Nights</button>
+      <button data-preset="palm-fever">Palm Fever</button>
+      <button data-preset="neon-overdrive">Neon Overdrive</button>
+      <button data-preset="golden-coast">Golden Coast</button>
     </div>
   </section>
 
@@ -90,16 +100,50 @@
       <label><input type="checkbox" id="tgl-halftone" checked> Halftone</label>
       <label><input type="checkbox" id="tgl-grain" checked> Grain</label>
       <label><input type="checkbox" id="tgl-glow" checked> Glow</label>
+      <label><input type="checkbox" id="tgl-facesafe" checked> Face-safe crop</label>
     </div>
-    <h2>4 · Caption</h2>
-    <div class="field"><label>Title <span id="title-count">12/40</span></label>
-      <input type="text" id="cap-title" maxlength="40" value="SUNSET HEIST">
+    <h2>4 · Poster Kit</h2>
+    <p class="hint">Movie-poster grammar, drawn on the cover — toggle each piece on or off.</p>
+    <div class="field"><label>Press quote</label>
+      <input type="text" id="kit-quote" value="PURE GOLDEN-HOUR MAYHEM">
+    </div>
+    <div class="field"><label>Outlet</label>
+      <input type="text" id="kit-outlet" value="THE HARBOR GAZETTE">
+    </div>
+    <div class="field"><label>Billing block</label>
+      <input type="text" id="kit-billing" value="A VICE COVER STUDIO PRODUCTION · STARRING THE CAST · SHOT ON YOUR OWN CAMERA">
+    </div>
+    <div class="field"><label>Gold seal text</label>
+      <input type="text" id="kit-seal" value="ORIGINAL COVER ART">
+    </div>
+    <div class="field"><label>Volume / edition tag</label>
+      <input type="text" id="kit-vol" value="VOL. 04">
+    </div>
+    <div class="field"><label>Release pill</label>
+      <select id="kit-coming">
+        <option value="COMING SOON">COMING SOON</option>
+        <option value="NOW SHOWING">NOW SHOWING</option>
+        <option value="">None</option>
+      </select>
+    </div>
+    <div class="row toggles">
+      <label><input type="checkbox" id="kit-roles" checked> Role tags</label>
+      <label><input type="checkbox" id="kit-quote-tgl" checked> Quote bar</label>
+      <label><input type="checkbox" id="kit-billing-tgl" checked> Billing</label>
+      <label><input type="checkbox" id="kit-seal-tgl" checked> Gold seal</label>
+      <label><input type="checkbox" id="kit-barcode-tgl" checked> Barcode</label>
+      <label><input type="checkbox" id="kit-vol-tgl" checked> VOL tag</label>
+      <label><input type="checkbox" id="kit-coming-tgl" checked> Release pill</label>
+    </div>
+    <h2>5 · Caption</h2>
+    <div class="field"><label>Title <span id="title-count">10/40</span></label>
+      <input type="text" id="cap-title" maxlength="40" value="PALM FEVER">
     </div>
     <div class="field"><label>Subtitle (neon script)</label>
-      <input type="text" id="cap-subtitle" value="one last score">
+      <input type="text" id="cap-subtitle" value="one last summer">
     </div>
     <div class="field"><label>Tagline</label>
-      <input type="text" id="cap-tagline" value="ONE CITY, EVERY LIGHT TELLS A STORY">
+      <input type="text" id="cap-tagline" value="FIVE FRIENDS · ONE COAST · NO WAY BACK">
     </div>
     <div class="field"><label>Kicker / City</label>
       <input type="text" id="cap-kicker" value="WELCOME TO VICE CITY">
@@ -111,11 +155,12 @@
       <input type="text" id="cap-ribbon" value="" placeholder="SAME TROUBLE">
     </div>
     <div class="field"><label>Heat</label><div class="heat" id="heat-stars"></div></div>
-    <div class="field"><label>Title fill</label>
-      <div class="pills" id="title-fill">
-        <button data-fill="sunset" class="active">Sunset gradient</button>
-        <button data-fill="white">Solid white</button>
-        <button data-fill="chrome">Chrome</button>
+    <div class="field"><label>Title style</label>
+      <div class="pills" id="title-style">
+        <button data-style="chrome" class="active">Retro Chrome 3D</button>
+        <button data-style="sunset">Sunset gradient</button>
+        <button data-style="white">Solid white</button>
+        <button data-style="neon">Neon outline</button>
       </div>
     </div>
     <div class="field"><label>Title position</label>
@@ -124,14 +169,31 @@
         <button data-pos="head">Top</button>
       </div>
     </div>
+    <div class="field"><label>Title placement</label>
+      <div class="pills" id="title-place">
+        <button data-place="band" class="active">In title band</button>
+        <button data-place="full-bleed">Full-bleed</button>
+      </div>
+    </div>
     <div class="field"><label>Title size <span id="title-size-val">100%</span></label>
       <input type="range" id="title-size" min="60" max="130" value="100">
+    </div>
+    <h2>6 · Vice File stats</h2>
+    <p class="hint">Stat bars for the Vice File layout (portrait).</p>
+    <div class="field"><label>DRIVE <span id="stat-drive-val">5/5</span></label>
+      <input type="range" id="stat-drive" min="0" max="5" value="5">
+    </div>
+    <div class="field"><label>NERVE <span id="stat-nerve-val">4/5</span></label>
+      <input type="range" id="stat-nerve" min="0" max="5" value="4">
+    </div>
+    <div class="field"><label>LUCK <span id="stat-luck-val">2/5</span></label>
+      <input type="range" id="stat-luck" min="0" max="5" value="2">
     </div>
     <p class="hint">Tip: “/” in the title starts a new line. Title at head puts it over the top panels.</p>
   </section>
 </main>
 <footer class="foot">
-  Made with Vice Cover Studio · photos stay on your machine · fonts Anton, Pacifico, Oswald (SIL Open Font License) · no Rockstar assets
+  Made with Vice Cover Studio · photos stay on your machine · fonts Anton, Pacifico, Oswald (SIL Open Font License) · cast portraits are AI-made · no Rockstar assets
 </footer>
 <script type="module" src="src/main.js"></script>
 </body>
