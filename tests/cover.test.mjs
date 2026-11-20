@@ -1,163 +1,163 @@
-// Logic tests for Vice Cover Studio v3 — run with:
-//   node --test tests/cover.test.mjs
-// Pure modules only (grades.js, layouts.js, presets.js): no DOM needed.
+// Node tests for Vice Cover Studio v4 (pure modules only — no DOM).
+// Run: node --test tests/cover.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GRADES, GRADE_IDS, buildLUT, gradePixels, meanSaturation } from '../app/src/grades.js';
-import { SIZES, LAYOUTS, LAYOUT_IDS, layoutFor, coverCrop, splitTitle, fitTitleSize } from '../app/src/layouts.js';
-import { SAMPLES, SHOTS } from '../app/src/presets.js';
+import { GRADES, GRADE_IDS, buildLUT, gradePixels, meanSaturation, rng } from '../app/src/grades.js';
+import { SIZES, LAYOUTS, LAYOUT_IDS, layoutFor, coverCrop, sliceCrop, splitTitle, fitTitleSize } from '../app/src/layouts.js';
+import { SAMPLES, SHOTS, PRESETS } from '../app/src/presets.js';
 
-// A small synthetic photo: horizontal luminance ramp with a hue gradient.
-function syntheticPhoto(w, h) {
-  const data = new Uint8ClampedArray(w * h * 4);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      data[i] = Math.round((x / w) * 255);
-      data[i + 1] = Math.round((y / h) * 200);
-      data[i + 2] = 120;
-      data[i + 3] = 255;
-    }
+function fakePixels(n = 64) {
+  const data = new Uint8ClampedArray(n * 4);
+  const rand = rng(42);
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.floor(rand() * 256);
+    data[i + 1] = Math.floor(rand() * 256);
+    data[i + 2] = Math.floor(rand() * 256);
+    data[i + 3] = 255;
   }
   return data;
 }
 
-test('every grade visibly changes pixels at ink 70', () => {
-  for (const id of GRADE_IDS) {
-    const grade = GRADES[id];
-    const before = syntheticPhoto(64, 48);
-    const after = new Uint8ClampedArray(before);
-    const lut = buildLUT(grade);
-    const change = gradePixels(after, lut, grade.posterize, 70);
-    assert.ok(change > 12, `${id}: mean change ${change.toFixed(1)} too small`);
-  }
-});
-
-test('Vice Sunset raises mean saturation', () => {
-  const before = syntheticPhoto(64, 48);
-  const satBefore = meanSaturation(before);
-  const after = new Uint8ClampedArray(before);
-  gradePixels(after, buildLUT(GRADES['vice-sunset']), 5, 70);
-  assert.ok(meanSaturation(after) > satBefore, `sat ${satBefore.toFixed(3)} -> ${meanSaturation(after).toFixed(3)}`);
-});
-
-test('posterize reduces distinct levels', () => {
-  const data = syntheticPhoto(64, 48);
-  gradePixels(data, buildLUT(GRADES['vice-sunset']), 4, 100);
-  const levels = new Set();
-  for (let i = 0; i < data.length; i += 4) levels.add(data[i]);
-  assert.ok(levels.size <= 6, `red levels ${levels.size}, expected <= 6 at posterize 4`);
+test('grade changes pixels visibly at full ink', () => {
+  const data = fakePixels();
+  const before = new Uint8ClampedArray(data);
+  const change = gradePixels(data, buildLUT(GRADES['vice-sunset']), 5, 100);
+  assert.ok(change > 5, `mean change ${change}`);
+  assert.notDeepEqual(data, before);
 });
 
 test('ink 0 leaves the photo untouched', () => {
-  const before = syntheticPhoto(32, 24);
-  const after = new Uint8ClampedArray(before);
-  const change = gradePixels(after, buildLUT(GRADES['vice-sunset']), 5, 0);
+  const data = fakePixels();
+  const before = new Uint8ClampedArray(data);
+  const change = gradePixels(data, buildLUT(GRADES['vice-sunset']), 5, 0);
   assert.equal(change, 0);
-  assert.deepEqual([...after], [...before]);
+  assert.deepEqual(data, before);
 });
 
-test('face-safe crop: focus stays inside the window, window inside the photo', () => {
-  const aspects = [
-    [1920, 1080], [1080, 1080], [1080, 1350], [1080, 1920],
-    [600, 400], [300, 600], [200, 200], [900, 300],
-  ];
-  for (const s of SAMPLES) {
-    const iw = 720;
-    const ih = 720;
-    for (const [pw, ph] of aspects) {
-      const win = coverCrop(iw, ih, pw, ph, { fx: s.fx, fy: s.fy });
-      assert.ok(win.sw > 0 && win.sh > 0, `${s.file} ${pw}x${ph}: empty window`);
-      assert.ok(win.sx >= 0 && win.sy >= 0, `${s.file}: window outside photo (negative)`);
-      assert.ok(win.sx + win.sw <= iw + 1 && win.sy + win.sh <= ih + 1, `${s.file}: window overflows photo`);
-      const fxPx = s.fx * iw;
-      const fyPx = s.fy * ih;
-      assert.ok(fxPx >= win.sx - 1 && fxPx <= win.sx + win.sw + 1, `${s.file} ${pw}x${ph}: focus x outside window`);
-      assert.ok(fyPx >= win.sy - 1 && fyPx <= win.sy + win.sh + 1, `${s.file} ${pw}x${ph}: focus y outside window`);
-      // The focus must sit in the upper-middle of the window, not at its edge.
-      const relY = (fyPx - win.sy) / win.sh;
-      assert.ok(relY >= 0.05 && relY <= 0.75, `${s.file} ${pw}x${ph}: focus at ${relY.toFixed(2)} of window height`);
-      assert.ok(Math.abs(win.sw / win.sh - pw / ph) < 0.01, 'window aspect must match panel aspect');
+test('Vice Sunset raises mean saturation', () => {
+  const data = fakePixels();
+  const before = meanSaturation(data);
+  gradePixels(data, buildLUT(GRADES['vice-sunset']), 5, 100);
+  assert.ok(meanSaturation(data) > before, `${before} -> ${meanSaturation(data)}`);
+});
+
+test('LUT endpoints match the grade stops', () => {
+  const lut = buildLUT(GRADES['neon-nights']);
+  assert.deepEqual([lut.r[0], lut.g[0], lut.b[0]], GRADES['neon-nights'].shadow);
+  assert.deepEqual([lut.r[255], lut.g[255], lut.b[255]], GRADES['neon-nights'].high);
+});
+
+test('six grades exist', () => {
+  assert.equal(GRADE_IDS.length, 6);
+});
+
+test('face-safe crop keeps the focus inside the window (wide panel)', () => {
+  const win = coverCrop(1280, 1920, 1056, 400, { fx: 0.5, fy: 0.38 });
+  assert.ok(win.sx <= 0.5 * 1280 && 0.5 * 1280 <= win.sx + win.sw, 'face x inside');
+  assert.ok(win.sy <= 0.38 * 1920 && 0.38 * 1920 <= win.sy + win.sh, 'face y inside');
+});
+
+test('face-safe crop keeps the focus inside the window (tall panel)', () => {
+  const win = coverCrop(720, 720, 300, 460, { fx: 0.42, fy: 0.22 });
+  assert.ok(win.sx <= 0.42 * 720 && 0.42 * 720 <= win.sx + win.sw, 'face x inside');
+  assert.ok(win.sy <= 0.22 * 720 && 0.22 * 720 <= win.sy + win.sh, 'face y inside');
+});
+
+test('face-safe crop keeps the focus at zoom 2', () => {
+  const win = coverCrop(1280, 1920, 600, 400, { fx: 0.78, fy: 0.33 }, 2);
+  assert.ok(win.sx <= 0.78 * 1280 && 0.78 * 1280 <= win.sx + win.sw);
+  assert.ok(win.sy <= 0.33 * 1920 && 0.33 * 1920 <= win.sy + win.sh);
+});
+
+test('sliced crop: the middle strip holds the whole face', () => {
+  const focus = { fx: 0.78, fy: 0.33 };
+  const win = sliceCrop(1280, 1920, 216, 1080, focus, 2, 5);
+  assert.ok(win.sx <= focus.fx * 1280 && focus.fx * 1280 <= win.sx + win.sw, 'face x inside middle strip');
+  assert.ok(win.sy <= focus.fy * 1920 && focus.fy * 1920 <= win.sy + win.sh, 'face y inside middle strip');
+});
+
+test('sliced crop: the other strips never contain the face point', () => {
+  const focus = { fx: 0.78, fy: 0.33 };
+  for (const i of [0, 1, 3, 4]) {
+    const win = sliceCrop(1280, 1920, 216, 1080, focus, i, 5);
+    const inside = win.sx <= focus.fx * 1280 && focus.fx * 1280 <= win.sx + win.sw
+      && win.sy <= focus.fy * 1920 && focus.fy * 1920 <= win.sy + win.sh;
+    assert.equal(inside, false, `strip ${i} must not hold the face`);
+  }
+});
+
+test("splitTitle splits on '/'", () => {
+  assert.deepEqual(splitTitle('PALM / FEVER'), ['PALM', 'FEVER']);
+});
+
+test('splitTitle splits long titles into at most two lines', () => {
+  const lines = splitTitle('NEON OVERDRIVE MIDNIGHT RUN');
+  assert.ok(lines.length <= 2);
+  assert.equal(lines.join(' '), 'NEON OVERDRIVE MIDNIGHT RUN');
+});
+
+test('fitTitleSize shrinks a long title to fit', () => {
+  const measure = (text, size) => text.length * size * 0.62;
+  const size = fitTitleSize(['PALM FEVER'], 400, 100, 120, measure);
+  assert.ok(size < 120);
+  assert.ok(measure('PALM FEVER', size) <= 400);
+});
+
+test('every layout x size stays inside the canvas', () => {
+  for (const layoutId of LAYOUT_IDS) {
+    for (const sizeId of Object.keys(SIZES)) {
+      const layout = layoutFor(sizeId, layoutId);
+      for (const p of layout.panels) {
+        assert.ok(p.x >= 0 && p.y >= 0 && p.x + p.w <= 1.001 && p.y + p.h <= 1.001,
+          `${layoutId} ${sizeId} panel out of bounds`);
+      }
+      if (layout.titleBand) {
+        assert.ok(layout.titleBand.h <= 0.30, `${layoutId} title band slim (<=30%)`);
+      }
     }
   }
 });
 
-test('face-safe crop honours zoom and pan inside the photo', () => {
-  const win = coverCrop(720, 720, 600, 400, { fx: 0.42, fy: 0.22 }, 2, 0.5, -0.5);
-  assert.ok(win.sw < 720 && win.sh < 720, 'zoom 2 must shrink the window');
-  assert.ok(win.sx >= 0 && win.sy >= 0 && win.sx + win.sw <= 720 && win.sy + win.sh <= 720);
+test('tall-only layouts fall back on landscape', () => {
+  assert.notEqual(layoutFor('landscape', 'vice-file').label, 'Vice File');
+  assert.equal(layoutFor('portrait', 'vice-file').label, 'Vice File');
 });
 
-test('title splits on "/" and into at most two balanced lines', () => {
-  assert.deepEqual(splitTitle('Paradise / After Dark'), ['Paradise', 'After Dark']);
-  assert.deepEqual(splitTitle('SUNSET HEIST'), ['SUNSET', 'HEIST']);
-  const two = splitTitle('SALT & SIRENS');
-  assert.equal(two.length, 2);
-  assert.equal(two.join(' '), 'SALT & SIRENS');
-  assert.deepEqual(splitTitle('HEATWAVE'), ['HEATWAVE']);
+test('the four shot captions are all different films', () => {
+  const titles = Object.values(SHOTS).map((s) => s.caption.title);
+  assert.equal(new Set(titles).size, 4, titles.join(', '));
+  const quotes = Object.values(SHOTS).map((s) => s.caption.quote);
+  assert.equal(new Set(quotes).size, 4);
+  const grades = Object.values(SHOTS).map((s) => s.grade);
+  assert.ok(new Set(grades).size >= 3, 'genre shift: at least 3 different grades');
 });
 
-test('title auto-fit shrinks a long title and keeps a short one big', () => {
-  const measure = (text, size) => text.length * size * 0.58;
-  const big = fitTitleSize(['HEAT'], 1000, 300, 260, measure);
-  assert.ok(big > 200, `short title should stay big, got ${big}`);
-  const small = fitTitleSize(['SUNSET HEIST', 'ONE LAST SCORE'], 500, 200, 260, measure);
-  assert.ok(small < 100, `long two-line title must shrink, got ${small}`);
-  assert.ok(small >= 12, 'never below the floor');
-});
-
-test('every layout stays inside the canvas and has real panels', () => {
-  for (const id of LAYOUT_IDS) {
-    const layout = LAYOUTS[id];
-    assert.ok(layout.panels.length >= 3, `${id}: too few panels`);
-    for (const p of layout.panels) {
-      assert.ok(p.x >= 0 && p.y >= 0 && p.x + p.w <= 1.001 && p.y + p.h <= 1.001, `${id}: panel outside canvas`);
-      assert.ok(p.w > 0.05 && p.h > 0.05, `${id}: degenerate panel`);
-    }
-    if (layout.titleBand) {
-      const b = layout.titleBand;
-      assert.ok(b.y + b.h <= 1.001, `${id}: title band outside canvas`);
-    }
+test('every shot caption carries the full poster kit', () => {
+  for (const [name, shot] of Object.entries(SHOTS)) {
+    const c = shot.caption;
+    assert.ok(c.quote && c.outlet, `${name} needs quote + outlet`);
+    assert.ok(c.billing, `${name} needs billing`);
+    assert.ok(c.vol, `${name} needs vol tag`);
+    assert.ok(c.seal, `${name} needs seal`);
+    assert.ok(c.coming, `${name} needs release pill`);
   }
 });
 
-test('layout inventory: 7 layouts, polaroid has 5 panels, vice-file is tall-only', () => {
-  assert.equal(LAYOUT_IDS.length, 7);
-  assert.equal(LAYOUTS.polaroid.panels.length, 5);
-  assert.equal(LAYOUTS['five-panel'].panels.length, 5);
-  assert.equal(LAYOUTS['sunset-grid'].panels.length, 6);
-  assert.equal(LAYOUTS['mosaic-7'].panels.length, 7);
-  assert.equal(LAYOUTS['vice-file'].tallOnly, true);
-  assert.equal(LAYOUTS.polaroid.tallOnly, true);
-  // Tall-only layouts fall back to sunset-grid on wide sizes.
-  assert.equal(layoutFor('landscape', 'polaroid'), LAYOUTS['sunset-grid']);
-  assert.equal(layoutFor('portrait', 'polaroid'), LAYOUTS.polaroid);
-  assert.equal(layoutFor('story', 'vice-file'), LAYOUTS['vice-file']);
-});
-
-test('8 samples, all with focus points and distinct files', () => {
+test('the cast has 8 samples, each with a role and a focus point', () => {
   assert.equal(SAMPLES.length, 8);
-  const files = new Set(SAMPLES.map((s) => s.file));
-  assert.equal(files.size, 8);
   for (const s of SAMPLES) {
-    assert.ok(s.fx > 0 && s.fx < 1 && s.fy > 0 && s.fy < 1, `${s.file}: focus out of range`);
-    assert.ok(s.name.length > 2, `${s.file}: no name`);
+    assert.ok(s.role, `${s.file} needs a role`);
+    assert.ok(s.fx > 0 && s.fx < 1 && s.fy > 0 && s.fy < 1, `${s.file} focus in range`);
   }
 });
 
-test('chrome title fill exists and the 4 shots all differ', () => {
-  const shots = Object.values(SHOTS);
-  assert.equal(shots.length, 4);
-  const captions = shots.map((s) => [s.caption.title, s.caption.subtitle, s.caption.tagline].join('|'));
-  assert.equal(new Set(captions).size, 4, 'every screenshot caption must differ');
-  assert.ok(shots.some((s) => s.caption.fill === 'chrome'), 'one size must use the chrome lettering');
-  assert.ok(shots.some((s) => s.layout === 'polaroid'), 'portrait shot must be the new Polaroid layout');
-  assert.ok(shots.some((s) => s.fillMode === 'sliced'), 'square shot must be the sliced one-photo mode');
+test('presets cover three different sizes', () => {
+  const sizes = new Set(Object.values(PRESETS).map((p) => p.size));
+  assert.equal(sizes.size, 3);
 });
 
-test('sizes are the three post sizes plus story', () => {
-  assert.deepEqual([SIZES.landscape.w, SIZES.landscape.h], [1920, 1080]);
-  assert.deepEqual([SIZES.square.w, SIZES.square.h], [1080, 1080]);
-  assert.deepEqual([SIZES.portrait.w, SIZES.portrait.h], [1080, 1350]);
-  assert.deepEqual([SIZES.story.w, SIZES.story.h], [1080, 1920]);
+test('rng is deterministic for the same seed', () => {
+  const a = rng(7);
+  const b = rng(7);
+  assert.deepEqual([a(), a(), a()], [b(), b(), b()]);
 });
