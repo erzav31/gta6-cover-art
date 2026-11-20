@@ -1,4 +1,4 @@
-// Vice Cover Studio v3 — gta6-cover-art-01 entry program (Node 22, standard
+// Vice Cover Studio v4 — gta6-cover-art-01 entry program (Node 22, standard
 // library only). It hands the app in: copies this repository's app/ and
 // screenshots/ into the output directory and writes /output/dossier.json,
 // the summary the judge reads, using the kit's vendored library. Run it
